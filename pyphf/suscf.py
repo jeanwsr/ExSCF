@@ -805,6 +805,9 @@ class SUHF():
     def get_EX(self):
         Jg, Kg = self.get_JKg()
         return get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+    
+    fchk = util2.fchk
+    
     def ddft(self, xc=None):
         if self.dm_reg is None:
             X = self.X

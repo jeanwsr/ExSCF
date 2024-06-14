@@ -1,6 +1,7 @@
 import numpy as np
 try:
-    from py2fch import py2fch
+    from mokit.lib.py2fch import py2fch
+    from mokit.lib.py2fch_direct import mol2fch
 except:
     print('py2fch not found. Interface with fch is disabled. Install MOKIT if you need that.')
 import os
@@ -30,6 +31,12 @@ def reg2ortho(dm, X, forward=True):
         return einsum('ji,jk,kl->il', X, dm, X)
     else:
         return einsum('ij,jk,lk->il', X, dm, X)
+
+def fchk(mf, fchname):
+    no = mf.natorb[2]
+    noon = mf.natocc[2]
+    mol2fch(mf.mol, fchname, False, no, -1)
+    py2fch(fchname, no.shape[0], no.shape[1], no, 'a', noon, True, False)
 
 def tofch(oldfch, natorb, natocc, S, flag='SUHFNO'):
     fch = oldfch.split('.fch')[0] + '_' + flag + '.fch'
