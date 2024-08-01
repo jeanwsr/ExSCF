@@ -18,30 +18,6 @@ except:
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
 
-class PDFT(mcpdft.PDFT):
-    def __init__(self, suhf, xc, dens, grids_level=4):
-        self.suhf = suhf
-        self.mol = suhf.mol
-        self.verbose = 5
-        self.stdout = suhf.stdout
-        #if xc is not None:
-        self.xc = xc
-        #else:
-        #    self.xc = None
-        self.dens = dens
-        self.testd = False
-        self.usemo = True
-        self.do_split = False
-        self.grids_level = grids_level
-
-    def kernel(self):
-        if self.dens == 'pd':
-            self._init_ot(self.xc)
-        grids_attr = {}
-        if self.grids_level is not None:
-            grids_attr['level'] = self.grids_level
-        self._init_grids(grids_attr)
-        return kernel(self, self.suhf)
 
 @timing
 def kernel(pdft, suhf):
@@ -57,7 +33,8 @@ def kernel(pdft, suhf):
     print('energy decomposition')
     if suhf.debug:
         old_decomp(suhf, dm1)
-    new_decomp(suhf, dm1)
+    res = new_decomp(suhf, dm1)
+    pdft.res = res
     if pdft.dens == 'dd':
         dmdefm = suhf.dm_reg
         #grids = sudft.set_grids(mol)
@@ -78,7 +55,8 @@ def kernel(pdft, suhf):
             print('E_xcu   %.6f' % exc3)
     elif pdft.dens == 'pd':
         #pdft._init_ot_grids(pdft.xc)
-        E_ot = get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split)
+        res = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split)
+        pdft.res = res
 
 def check_2pdm(adm2s, dm1s, suhf):
     na = adm2s[0].shape[0]
@@ -100,7 +78,7 @@ def check_2pdm(adm2s, dm1s, suhf):
     print('redo e: %.6f' % e)
     
 @timing
-def get_pd(suhf, ot, usemo, do_split):
+def get_pd(pdft, suhf, ot, usemo, do_split):
     #ot = _init_ot_grids (ot, suhf.mol)
     if do_split:
         xfnal, cfnal = ot.split_x_c()
@@ -129,6 +107,7 @@ def get_pd(suhf, ot, usemo, do_split):
     #dm1s = np.dot (mo, dm1s).transpose (1,0,2)
     #print(dm1s)
     #dm1s += np.dot (mo_core, moH_core)[None,:,:]
+    res = pdft.res
     if do_split:
         E_otx =  get_E_ot(xfnal, adm1s, adm2, mo, core)
         E_otc =  get_E_ot(cfnal, adm1s, adm2, mo, core)
@@ -136,11 +115,16 @@ def get_pd(suhf, ot, usemo, do_split):
         print('E_otc  : %15.8f' %E_otc)
         E_ot = E_otx + E_otc
         print('E_ot   : %15.8f' %E_ot)
-        return E_ot, E_otx, E_otc
+        #return E_ot, E_otx, E_otc
+        res['otx'] = E_otx
+        res['otc'] = E_otc
+        res['otxc'] = E_ot
     else:
         E_ot =  get_E_ot(ot, dm1s, adm2, mo)
         print('E_ot   : %15.8f' %E_ot)
-        return E_ot
+        #return E_ot
+        res['otxc'] = E_ot
+    return res
 
 
 def new_decomp(suhf, dm1):
@@ -162,7 +146,11 @@ def new_decomp(suhf, dm1):
     if suhf.debug:
         print('E_jk   : %15.8f' % Ejk)
     print('E_c    : %15.8f' % Ec)
-    return enuc, Ecore, Ej, Ek, Ec
+    res = {'suhf': suhf.E_suhf,
+           'j': Ej,
+           'k': Ek,
+           'c': Ec}
+    return res
 
 def old_decomp(suhf, dm1):
     dm1t = dm1[0] + dm1[1]
@@ -214,3 +202,30 @@ def get_H(suhf, hcore_ortho, no, Pg, Gg, Jg, Kg, xg):
     #print('ciH', ciH0, ciH1, ciH1j, ciH1k)
     #suhf.trHg = trHg
     return H0, H1, H1j, H1k
+
+class PDFT(mcpdft.PDFT):
+    def __init__(self, suhf, xc, dens, grids_level=4):
+        self.suhf = suhf
+        self.mol = suhf.mol
+        self.verbose = 5
+        self.stdout = suhf.stdout
+        #if xc is not None:
+        self.xc = xc
+        #else:
+        #    self.xc = None
+        self.dens = dens
+        self.testd = False
+        self.usemo = True
+        self.do_split = False
+        self.grids_level = grids_level
+
+    def kernel(self):
+        if self.dens == 'pd':
+            self._init_ot(self.xc)
+        grids_attr = {}
+        if self.grids_level is not None:
+            grids_attr['level'] = self.grids_level
+        self._init_grids(grids_attr)
+        return kernel(self, self.suhf)
+    
+    get_pd = get_pd
