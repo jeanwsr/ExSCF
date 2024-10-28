@@ -379,6 +379,7 @@ class SUHF():
         self.max_cycle = 70
         self.noiter = False
         self.diis_on = True
+        self.diis_space = None
         self.diis_start_cyc = None
         self.level_shift = None
 
@@ -471,14 +472,17 @@ class SUHF():
         self.max_memory = max(hf.max_memory, 4000)
         if self.diis_on:
             #assert issubclass(mf.DIIS, lib.diis.DIIS)
-            self.diis_space = 8
+            if self.diis_space is None:
+                self.diis_space = 8
             if self.diis_start_cyc is None:
                 self.diis_start_cyc = 10
             self.diis_file = None
             #mf_diis.rollback = mf.diis_space_rollback
             self.diis = scf.diis.CDIIS()
+            self.diis.space = self.diis_space
             print('DIIS: %s' % self.diis.__class__)
             print('diis_start_cyc = %d' % self.diis_start_cyc)
+            print('diis_space = %d' % self.diis_space)
         if self.level_shift is not None:
             shift = self.level_shift
             print('level shift: %.3f a.u.' % shift)
@@ -658,6 +662,8 @@ class SUHF():
             self.E_suhf = E_suhf
             if self.diis_on and cyc >= self.diis_start_cyc:
                 s1e = np.eye(norb)
+                errvec = scf.diis.get_err_vec(s1e, self.dm_ortho, F_mod_ortho, None)
+                print('diis-norm(errvec)=%.6g'% np.linalg.norm(errvec))
                 F_mod_ortho = self.diis.update(s1e, self.dm_ortho, F_mod_ortho)
                 print('F(mod,ortho) updated with CDIIS')
                 if self.debug: print(F_mod_ortho)
