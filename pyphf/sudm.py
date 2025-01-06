@@ -187,19 +187,22 @@ def make_rdm12_no(suhf, debug=None):
     #print(rdm2_no2[0,0,0,0], rdm2_no2[0,0,1,1], rdm2_no2[0,1,1,0])
     return rdm1_no, np.array(rdm2_no)
 
-def make_rdm12_no_native(suhf):
+@timing
+def make_rdm12_no_native(suhf, thresh=1e-5):
     natorb = suhf.natorb[2]
     #print(np.dot(natorb.T, natorb))
     noinv = np.linalg.inv(natorb)
     rdm1_no = einsum('pi, tik, rk -> tpr', noinv, np.array(suhf.suhf_dm), noinv)
     natocc = suhf.natocc[2]
-    occ, [core, act, ext] = util2.dump_occ(natocc, 2.0, 0.99999)
+    occ, [core, act, ext] = util2.dump_occ(natocc, 2.0, 1 - thresh)
+    print('PDFT active threshold: ', thresh)
+    print('PDFT active orb number: %d' % act)
     act_idx = slice(core, core+act)
     rdm2_no = make_2pdm_natorb(suhf, act_idx)
     def trans(dm2):
         return dm2.transpose(0,3,1,2)*2.0
     rdm2_no_trans = trans(rdm2_no[0]), trans(rdm2_no[1]), trans(rdm2_no[2])
-    return rdm1_no, np.array(rdm2_no_trans)
+    return rdm1_no, np.array(rdm2_no_trans), core, act_idx
 
 
 

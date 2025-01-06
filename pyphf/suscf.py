@@ -379,9 +379,13 @@ class SUHF():
         self.max_cycle = 70
         self.noiter = False
         self.diis_on = True
+        self.diis_driver = 'def'
         self.diis_space = None
+        self.diis_damp = 0.0
         self.diis_start_cyc = None
+        self.diis_start_damp = 0
         self.level_shift = None
+        self.shift_driver = 'def'
 
         self.dft = False
         self.makedm = True
@@ -469,7 +473,7 @@ class SUHF():
         #self.chkfile2 = self.output + '_no.pchk'
         #print('chkfile2: %s # the file store suhf NO' % self.chkfile2)
 
-        self.max_memory = max(hf.max_memory, 4000)
+        self.max_memory = hf.max_memory
         if self.diis_on:
             #assert issubclass(mf.DIIS, lib.diis.DIIS)
             if self.diis_space is None:
@@ -478,11 +482,16 @@ class SUHF():
                 self.diis_start_cyc = 10
             self.diis_file = None
             #mf_diis.rollback = mf.diis_space_rollback
-            self.diis = scf.diis.CDIIS()
+            if self.diis_driver == 'def':
+                self.diis = scf.diis.CDIIS()
+            elif self.diis_driver == 'rev1':
+                self.diis = util2.CDIISrev1()
             self.diis.space = self.diis_space
+            #self.diis.damp = self.diis_damp
             print('DIIS: %s' % self.diis.__class__)
             print('diis_start_cyc = %d' % self.diis_start_cyc)
             print('diis_space = %d' % self.diis_space)
+            #print('diis_damp = %g' % self.diis_damp)
         if self.level_shift is not None:
             shift = self.level_shift
             print('level shift: %.3f a.u.' % shift)
@@ -589,6 +598,7 @@ class SUHF():
         self.conv = conv
         
         Pgao = None
+        F_mod_ortho = None
         #print(vhfopt)
         t_pre = time.time() 
         print('time for Preparation before cyc: %.3f' % (t_pre-t_start))
@@ -647,6 +657,7 @@ class SUHF():
             self.ciH = ciH
             S2 = get_S2(self, Pg_ortho)
             Xg, Xg_int, Yg = get_Yg(self, Dg, Ng, self.dm_no, na+nb)
+            F_last = F_mod_ortho
             Feff_ortho,  F_mod_ortho = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
             E_suhf = self.energy_nuc + H_suhf
             #print('E(SUHF) = %15.8f' % E_suhf)
@@ -664,14 +675,22 @@ class SUHF():
                 s1e = np.eye(norb)
                 errvec = scf.diis.get_err_vec(s1e, self.dm_ortho, F_mod_ortho, None)
                 print('diis-norm(errvec)=%.6g'% np.linalg.norm(errvec))
-                F_mod_ortho = self.diis.update(s1e, self.dm_ortho, F_mod_ortho)
+                if cyc < self.diis_start_damp:
+                    self.diis.damp = 0.0
+                else:
+                    self.diis.damp = self.diis_damp
+                print('diis_damp = %g' % self.diis.damp)
+                F_mod_ortho = self.diis.update(s1e, self.dm_ortho, F_mod_ortho, f_prev=F_last)
                 print('F(mod,ortho) updated with CDIIS')
                 if self.debug: print(F_mod_ortho)
             if self.level_shift is not None:
                 shift = self.level_shift
                 s1e = np.eye(norb)
-                print('level shift: %.3f a.u.' % shift)
-                F_mod_ortho = lev_shift(s1e, self.dm_ortho, F_mod_ortho, shift)
+                #print('level shift: %.3f a.u.' % shift)
+                if self.shift_driver == 'def':
+                    F_mod_ortho = lev_shift(s1e, self.dm_ortho, F_mod_ortho, shift)
+                elif self.shift_driver == '2':
+                    F_mod_ortho = lev_shift2(s1e, self.dm_ortho, F_mod_ortho, shift)
             if noiter:
                 self.regular()
                 print(' E = %15.8f' % E_suhf)
@@ -872,5 +891,16 @@ def lev_shift(s, dm, f, shift):
              scf.hf.level_shift(s, dm[1], f[1], shift)
              )
     return np.array(new_f)
+
+def lev_shift2(s, dm, f, shift):
+    new_f = (shift_down_occ(s, dm[0], f[0], shift),
+             shift_down_occ(s, dm[1], f[1], shift)
+             )
+    return np.array(new_f)
+
+def shift_down_occ(s, dm, f, shift):
+    # assume ortho
+    f = f - shift * dm
+    return f
 
 

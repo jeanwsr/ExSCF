@@ -174,3 +174,48 @@ def git_info(repo_path):
     except IOError:
         pass
     return orig_head, head, branch
+
+from pyscf.scf import diis
+from pyscf import lib
+
+get_err_vec = diis.get_err_vec
+
+class CDIISrev(diis.CDIIS):
+    
+    def update(self, s, d, f, *args, **kwargs):
+        errvec = get_err_vec(s, d, f, self.Corth)
+        #logger.debug1(self, 'diis-norm(errvec)=%g', numpy.linalg.norm(errvec))
+        f_prev = kwargs.get('f_prev', None)
+        if abs(self.damp) < 1e-6 or f_prev is None:
+            xnew = lib.diis.DIIS.update(self, f, xerr=errvec)
+        else:
+            fnew = f*(1-self.damp) + f_prev*self.damp
+            errvec = get_err_vec(s, d, fnew, self.Corth)
+            xnew = lib.diis.DIIS.update(self, fnew, xerr=errvec)
+        if self.rollback > 0 and len(self._bookkeep) == self.space:
+            self._bookkeep = self._bookkeep[-self.rollback:]
+        return xnew
+
+class CDIISrev1(diis.CDIIS):
+    
+    def update(self, s, d, f, *args, **kwargs):
+        errvec = get_err_vec(s, d, f, self.Corth)
+        #logger.debug1(self, 'diis-norm(errvec)=%g', numpy.linalg.norm(errvec))
+        f_prev = kwargs.get('f_prev', None)
+        if abs(self.damp) < 1e-6 or f_prev is None:
+            xnew = lib.diis.DIIS.update(self, f, xerr=errvec)
+        else:
+            xnew = lib.diis.DIIS.update(self, f, xerr=errvec)
+            xnew = xnew*(1-self.damp) + f_prev*self.damp
+        if self.rollback > 0 and len(self._bookkeep) == self.space:
+            self._bookkeep = self._bookkeep[-self.rollback:]
+        return xnew
+
+class CDIISrev2(diis.CDIIS):
+    
+    def update(self, s, d, f, *args, **kwargs):
+        xnew = lib.diis.DIIS.update(self, f)
+        
+        if self.rollback > 0 and len(self._bookkeep) == self.space:
+            self._bookkeep = self._bookkeep[-self.rollback:]
+        return xnew

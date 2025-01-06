@@ -1,20 +1,29 @@
 from pyphf import suscf, jk, sudft, sudm, util2
 from pyphf.timing import timing
-from pyscf import dft
+#from pyscf import dft
+from pyscf.lib import chkfile
 import pyscf.dft.numint as numint
 from automr import mcpdft
 from automr.mcpdft import sum_adm2
 import numpy as np
 from functools import partial
 #import time
-
-try:
-    from mrh.my_pyscf.mcpdft.mcpdft import _PDFT
-    from mrh.util.rdm import get_2CDM_from_2RDM, get_2CDMs_from_2RDMs
-    from mrh.my_pyscf.mcpdft.otfnal import energy_ot as get_E_ot
-    #from mrh.my_pyscf.mcpdft.otfnal import transfnal, ftransfnal, get_transfnal
-except:
-    print('Warning: mrh not found')
+import os
+pdft_backend = os.environ.get('PDFT_BACKEND', 'pyscf')
+if pdft_backend == 'mrh':
+    try:
+        #from mrh.my_pyscf.mcpdft.mcpdft import _PDFT
+        #from mrh.util.rdm import get_2CDM_from_2RDM, get_2CDMs_from_2RDMs
+        from mrh.my_pyscf.mcpdft.otfnal import energy_ot as get_E_ot
+        #from mrh.my_pyscf.mcpdft.otfnal import transfnal, ftransfnal, get_transfnal
+    except:
+        print('Warning: mrh not found')
+elif pdft_backend == 'pyscf':
+    try:
+        #from pyscf.mcpdft.mcpdft import _PDFT
+        from pyscf.mcpdft.otfnal import energy_ot as get_E_ot
+    except:
+        print('Warning: pyscf.mcpdft not found')
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
 
@@ -28,6 +37,7 @@ def kernel(pdft, suhf):
             pdft.xc = 'tpbe'
     print('\n******** %s ********' % pdft.__class__)
     print('method: SU%s-%s' % (pdft.dens.upper(), pdft.xc.upper()))
+    print('max_memory: %d' % pdft.max_memory)
     mol = suhf.mol
     dm1 = suhf.suhf_dm
     print('energy decomposition')
@@ -55,8 +65,10 @@ def kernel(pdft, suhf):
             print('E_xcu   %.6f' % exc3)
     elif pdft.dens == 'pd':
         #pdft._init_ot_grids(pdft.xc)
-        res = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split)
+        res, res2 = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split, max_memory=pdft.max_memory)
         pdft.res = res
+        res_supd = get_supd_func(res, pdft.xc.upper())
+        return res, res2
 
 def check_2pdm(adm2s, dm1s, suhf):
     na = adm2s[0].shape[0]
@@ -76,17 +88,32 @@ def check_2pdm(adm2s, dm1s, suhf):
     print(dm1s[0])
     e = einsum("pq, qp ->", h, 2*dm1s[0]) + 0.5 * einsum("pqrs, qrps ->", g, 4*(adm2s[0] + adm2s[1] + adm2s[2])) + mol.energy_nuc()
     print('redo e: %.6f' % e)
-    
+
+def dump_adm(h5file, adm1s, adm2, mo, core):
+    dic = {
+        'adm1s': adm1s,
+        'adm2': adm2,
+        'mo': mo,
+        'core': core
+    }
+    print('strides', adm1s.strides, adm2.strides)
+    chkfile.save(h5file, 'pdft', dic)
+
+def load_adm(h5file):
+    dic = chkfile.load(h5file, 'pdft')
+    return dic['adm1s'], dic['adm2'], dic['mo'], dic['core']
+
 @timing
-def get_pd(pdft, suhf, ot, usemo, do_split):
+def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
+    print('pdft backend: %s' % pdft_backend)
     #ot = _init_ot_grids (ot, suhf.mol)
     if do_split:
         xfnal, cfnal = ot.split_x_c()
     dm1s = np.array(suhf.suhf_dm)
     if usemo:
-        _, [core, act, ext] = util2.dump_occ(suhf.natocc[2], 2.0, 0.99999)
-        act_idx = slice(core, core+act)
-        adm1s, adm2s = sudm.make_rdm12_no_native(suhf)
+        #_, [core, act, ext] = util2.dump_occ(suhf.natocc[2], 2.0, 0.99999)
+        #act_idx = slice(core, core+act)
+        adm1s, adm2s, core, act_idx = sudm.make_rdm12_no_native(suhf, thresh=pdft.no_thresh)
         adm1s = adm1s[:,act_idx, act_idx]
         #adm2s = adm2s[:,act_idx, act_idx, act_idx, act_idx]
         print(adm1s.shape, adm2s.shape)
@@ -107,10 +134,12 @@ def get_pd(pdft, suhf, ot, usemo, do_split):
     #dm1s = np.dot (mo, dm1s).transpose (1,0,2)
     #print(dm1s)
     #dm1s += np.dot (mo_core, moH_core)[None,:,:]
+    if pdft.dump_adm:
+        dump_adm(pdft.dump_adm, adm1s, adm2, mo, core)
     res = pdft.res
     if do_split:
-        E_otx =  get_E_ot(xfnal, adm1s, adm2, mo, core)
-        E_otc =  get_E_ot(cfnal, adm1s, adm2, mo, core)
+        E_otx =  get_E_ot(xfnal, adm1s, adm2, mo, core, max_memory=max_memory)
+        E_otc =  get_E_ot(cfnal, adm1s, adm2, mo, core, max_memory=max_memory)
         print('E_otx  : %15.8f' %E_otx)
         print('E_otc  : %15.8f' %E_otc)
         E_ot = E_otx + E_otc
@@ -120,12 +149,32 @@ def get_pd(pdft, suhf, ot, usemo, do_split):
         res['otc'] = E_otc
         res['otxc'] = E_ot
     else:
-        E_ot =  get_E_ot(ot, dm1s, adm2, mo)
+        E_ot =  get_E_ot(ot, dm1s, adm2, mo, max_memory=max_memory)
         print('E_ot   : %15.8f' %E_ot)
         #return E_ot
         res['otxc'] = E_ot
-    return res
+    return res, (adm1s, adm2, mo, core)
 
+def e_supd(res, hyb):
+    return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb)
+
+def e_supd_k(res, hyb, k):
+    return res['suhf'] + (res['otx'] - res['k'] - res['c']) * (1.0 - hyb) + (1.0-hyb**k)*res['otc']
+
+def e_supd_c(res, hyb, c):
+    return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb) + c*res['otc']
+
+def get_supd_func(res, xc):
+    hyb = 0.25
+    k = 2
+    c = 0.4
+    res_supd = {'e_supd': e_supd(res, 0.0),
+                'e_supd_k': e_supd_k(res, hyb, k),
+                'e_supd_c': e_supd_c(res, hyb, c)}
+    print('E(SU-t%s) : %15.8f' % (xc, res_supd['e_supd']))
+    print('E(SU-t%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, hyb, k, res_supd['e_supd_k']))
+    print('E(SU-t%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, hyb, c, res_supd['e_supd_c']))
+    return res_supd
 
 def new_decomp(suhf, dm1):
     enuc = suhf.energy_nuc
@@ -218,6 +267,9 @@ class PDFT(mcpdft.PDFT):
         self.usemo = True
         self.do_split = False
         self.grids_level = grids_level
+        self.max_memory = suhf.max_memory
+        self.dump_adm = False
+        self.no_thresh = 1e-5
 
     def kernel(self):
         if self.dens == 'pd':
@@ -229,3 +281,6 @@ class PDFT(mcpdft.PDFT):
         return kernel(self, self.suhf)
     
     get_pd = get_pd
+
+    def load_adm(self, h5file):
+        return load_adm(h5file)
