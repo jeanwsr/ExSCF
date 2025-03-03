@@ -165,15 +165,17 @@ def e_supd_c(res, hyb, c):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb) + c*res['otc']
 
 def get_supd_func(res, xc):
-    hyb = 0.25
+    #hyb = 0.25
     k = 2
     c = 0.4
     res_supd = {'e_supd': e_supd(res, 0.0),
-                'e_supd_k': e_supd_k(res, hyb, k),
-                'e_supd_c': e_supd_c(res, hyb, c)}
-    print('E(SU-t%s) : %15.8f' % (xc, res_supd['e_supd']))
-    print('E(SU-t%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, hyb, k, res_supd['e_supd_k']))
-    print('E(SU-t%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, hyb, c, res_supd['e_supd_c']))
+                'e_supd_k': e_supd_k(res, 0.25, k),
+                'e_supd_k1': e_supd_k(res, 0.10, k),
+                'e_supd_c': e_supd_c(res, 0.25, c)}
+    print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
+    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.25, k, res_supd['e_supd_k']))
+    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.10, k, res_supd['e_supd_k1']))
+    print('E(SU-%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, 0.25, c, res_supd['e_supd_c']))
     return res_supd
 
 def new_decomp(suhf, dm1):

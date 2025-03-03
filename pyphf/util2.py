@@ -6,7 +6,7 @@ except:
     print('py2fch not found. Interface with fch is disabled. Install MOKIT if you need that.')
 import os
 from functools import partial
-from pyscf.lib.chkfile import dump, save
+from pyscf.lib.chkfile import save, load
 from pyscf.lib.chkfile import load_mol, save_mol
 
 print = partial(print, flush=True)
@@ -106,8 +106,8 @@ def dump_occ(occ, full=1.0, ratio=0.99):
 def warn(s):
     return "\033[43;34m Warning: " + s + "\033[0m"
 
-def load(pchk):
-    return 0
+def load_chk(pchk):
+    return load_mol(pchk), load(pchk, 'scf')
 
 def dump_chk(mol, chkfile, e_tot, mo_e, mo, mo_occ, dm):
     save_mol(mol, chkfile)

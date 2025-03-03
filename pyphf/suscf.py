@@ -459,7 +459,7 @@ class SUHF():
             self.guesshf = hf
             print('****** End of UHF ********')
         elif self.chkfile is not None:
-            self.mol, suinfo = util2.load(self.chkfile)
+            self.mol, suinfo = util2.load_chk(self.chkfile)
         else:
             guess = ''' 
             guesshf: a UHF object

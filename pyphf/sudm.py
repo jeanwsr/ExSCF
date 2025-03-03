@@ -205,7 +205,7 @@ def make_rdm12_no_native(suhf, thresh=1e-5):
     return rdm1_no, np.array(rdm2_no_trans), core, act_idx
 
 
-
+@timing
 def make_2pdm_natorb(suhf, act_idx):
     t0 = time.time()
     #no = suhf.no
@@ -281,6 +281,7 @@ def contr1(p1,p2,p3,p4, fac):
     j2p0 *= fac
     return j2p0
 
+@timing
 def make_2pdm(pgg, x, norb, cgf, wgt):
     pggaa, pggbb, pggba, pggab = pgg
     cgf00, cgf10, cgf20, cgf1p1, cgf2p1, cgf2p2, cgf1m1, cgf2m1, cgf2m2 = cgf
