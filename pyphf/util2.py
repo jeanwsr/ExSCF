@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.linalg as la
 try:
     from mokit.lib.py2fch import py2fch
     from mokit.lib.py2fch_direct import mol2fch
@@ -11,6 +12,13 @@ from pyscf.lib.chkfile import load_mol, save_mol
 
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
+
+def is_hermi(dms):
+    h = []
+    for dm in dms:
+        hermi = la.ishermitian(dm)
+        h.append(hermi)
+    return h
 
 def dmlist(dmas, dmbs, fac=-1):
     ddms = []

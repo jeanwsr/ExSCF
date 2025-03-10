@@ -70,8 +70,7 @@ def kernel(pdft, suhf):
         res_supd = get_supd_func(res, pdft.xc.upper())
         return res, res2
 
-def check_2pdm(adm2s, dm1s, suhf):
-    na = adm2s[0].shape[0]
+def dump_dm2(adm2s, na):
     for i in range(na):
         for j in range(i,na):
             for k in range(na):
@@ -82,12 +81,36 @@ def check_2pdm(adm2s, dm1s, suhf):
                         print("ab %d %d %d %d %.6f" % (i,j,k,l,adm2s[1][i,l,j,k]))
                     if abs(adm2s[2][i,l,j,k]) > 1e-4:
                         print("bb %d %d %d %d %.6f" % (i,j,k,l,adm2s[2][i,l,j,k]))
+
+def check_2pdm(adm2s, dm1s, suhf):
+    na = adm2s[0].shape[0]
+    dump_dm2(adm2s, na)
     mol = suhf.mol
     h = mol.intor("int1e_kin") + mol.intor("int1e_nuc")
     g = mol.intor("int2e")
     print(dm1s[0])
     e = einsum("pq, qp ->", h, 2*dm1s[0]) + 0.5 * einsum("pqrs, qrps ->", g, 4*(adm2s[0] + adm2s[1] + adm2s[2])) + mol.energy_nuc()
     print('redo e: %.6f' % e)
+
+def check_2pdm_no(adm2s, dm1s, suhf, no):
+    from pyscf import mcscf, ao2mo
+    norb = adm2s[0].shape[0]
+    dump_dm2(adm2s, norb)
+    ne = 3
+    fake_cas = mcscf.CASCI(suhf.guesshf, norb, ne)
+    fake_cas.mo_coeff = no
+    eri_cas = fake_cas.get_h2eff(no)
+    h2e = ao2mo.restore(1, eri_cas, norb)
+    h1eff, energy_core = fake_cas.get_h1eff(no)
+    e0 = energy_core 
+    e1 = einsum("pq, qp ->", h1eff, dm1s[0]+dm1s[1]) 
+    e2 = 0.5 * einsum("pqrs, pqrs ->", h2e, sum_adm2(adm2s)) 
+    e = e0 + e1 + e2
+    print('E0 : %15.8f' % e0)
+    print('E1    : %15.8f' % e1)
+    print('E2    : %15.8f' % e2)
+    print('redo e: %.6f' % e)
+
 
 def dump_adm(h5file, adm1s, adm2, mo, core):
     dic = {

@@ -1,6 +1,6 @@
 from pyphf import suscf, sudft
 
-__version__ = '0.4.2'
+__version__ = '0.5.0'
 
 
 SUHF = suscf.SUHF

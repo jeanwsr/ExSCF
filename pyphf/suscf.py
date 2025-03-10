@@ -386,6 +386,7 @@ class SUHF():
         self.diis_start_damp = 0
         self.level_shift = None
         self.shift_driver = 'def'
+        self.incfock = False
 
         self.dft = False
         self.makedm = True
@@ -542,6 +543,7 @@ class SUHF():
         self.hcore_ortho = einsum('ji,jk,kl->il', X, hcore, X)
         if self.debug:
             print('hcore (ortho)\n', self.hcore_ortho)
+        #hf.direct_scf_tol = 1e-13
         self.vhfopt = hf.init_direct_scf()
 
         if self.dft:
@@ -598,6 +600,8 @@ class SUHF():
         self.conv = conv
         
         Pgao = None
+        #old_Pgao = None
+        #old_Ggao = None
         F_mod_ortho = None
         #print(vhfopt)
         t_pre = time.time() 
@@ -606,17 +610,19 @@ class SUHF():
             print('**** Start Cycle %d ****' % cyc)
             old_suhf = self.E_suhf
             old_dm = self.dm_ortho
-            #if Pgao is not None:
-            #    old_Pgao = Pgao
-            #    old_Ggao = Ggao
-            #else:
-            old_Pgao = old_Ggao = None
+            if Pgao is not None and self.incfock:
+                old_Pgao = Pgao
+                old_Ggao = Ggao
+            else:
+                old_Pgao = None
+                old_Ggao = None
             #if cyc==0:
             #    veff = mf.get_veff(dm = dm)
             #else:
             t01 = time.time()
             dm_reg = einsum('ij,tjk,lk->til', X, self.dm_ortho, X)
-            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            #veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            veff = self.get_uhf_veff(dm_reg)
             veff_ortho = einsum('ji,tjk,kl->til', X, veff, X)
             if self.debug:
                 print('dm (ortho)')
@@ -642,7 +648,8 @@ class SUHF():
                 print('P(g) (NO)\n', Pg[0])
             t05 = time.time()
             print('time for NO, Ng: %.3f' % (t05-t01))
-            Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = jk.get_Gg(self.mol, Pg, self.no, X, dm_last=old_Pgao, Ggao_last=old_Ggao, opt=self.vhfopt)
+            #Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = jk.get_Gg(self.mol, Pg, self.no, X, dm_last=old_Pgao, Ggao_last=old_Ggao, opt=self.vhfopt)
+            Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = self.get_Gg(dm_last=old_Pgao, Ggao_last=old_Ggao)
             self.Gg = Gg
             self.Gg_ortho = Gg_ortho
             if self.debug:
@@ -730,11 +737,12 @@ class SUHF():
         # extra cycle to remove level shift
         old_suhf = self.E_suhf
         old_dm = self.dm_ortho
-        #old_Pgao = Pgao
-        #old_Ggao = Ggao
+        old_Pgao = None
+        old_Ggao = None
         if self.level_shift is not None:
             print('**** Extra Cycle %d ****' % cyc)
-            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            #veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            veff = self.get_uhf_veff(dm_reg)
             veff_ortho = einsum('ji,tjk,kl->til', X, veff, X)
             if self.debug:
                 print('dm (ortho)')
@@ -754,7 +762,8 @@ class SUHF():
                 print('D(g) (NO)\n', Dg[0])
                 print('N(g) (NO)\n', Ng[0])
                 print('P(g) (NO)\n', Pg[0])
-            Gg, Gg_ortho, Pg_ortho, _, _ = jk.get_Gg(self.mol, Pg, self.no, X, opt=self.vhfopt)
+            #Gg, Gg_ortho, Pg_ortho, _, _ = jk.get_Gg(self.mol, Pg, self.no, X, opt=self.vhfopt)
+            Gg, Gg_ortho, Pg_ortho, _, _ = self.get_Gg()
             self.Gg = Gg
             self.Gg_ortho = Gg_ortho
             if self.debug:
@@ -823,6 +832,23 @@ class SUHF():
         print('time tot: %.3f' % (t_end-t_start))
         print('Date: %s' % time.ctime())
         return E_suhf, self.conv
+
+    def density_fit(self, auxbasis=None):
+        #with_df = jk.DF(self.mol)
+        with_df = self.guesshf.with_df
+        #with_df.max_memory = self.max_memory
+        #with_df.verbose = self.verbose
+        #with_df.auxbasis = auxbasis
+        dfmf = DFSUHF(self)
+        dfmf.with_df = with_df
+        return dfmf
+
+    def get_uhf_veff(self, dm_reg):
+        veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+        return veff
+
+    def get_Gg(self, dm_last=None, Ggao_last=None):
+        return jk.get_Gg(self.mol, self.Pg, self.no, self.X, dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt)
 
     def get_JKg(self):
         return jk.get_JKg(self.mol, self.Pg, self.no, self.X)[:2]
@@ -903,4 +929,15 @@ def shift_down_occ(s, dm, f, shift):
     f = f - shift * dm
     return f
 
+class DFSUHF(SUHF):
+    def __init__(self, smf):
+        self.__dict__.update(smf.__dict__)
 
+    def get_Gg(self, dm_last=None, Ggao_last=None):
+        return jk.get_Gg_df(self.mol, self.Pg, self.no, self.X, #dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt
+                            with_df=self.with_df)
+
+    def get_uhf_veff(self, dm_reg):
+        vj, vk = jk.get_jk_df(self.with_df, dm_reg, hermi=0)
+        veff = vj[0] + vj[1] - vk
+        return veff
