@@ -52,6 +52,8 @@ def kernel(pdft, suhf):
         ni = numint.NumInt()
         n, exc, vxc = ni.nr_uks(mol, grids, pdft.xc, dmdefm)
         print('E_xcdft %.6f' % exc)
+        res['xcdft'] = exc
+        pdft.res = res
         if pdft.testd:
             n2, exc2, vxc2 = ni.nr_uks(mol, grids, pdft.xc, dm1)
             print('E_xcrho %.6f' % exc2)
@@ -63,6 +65,8 @@ def kernel(pdft, suhf):
             dm_ub = einsum('ij,j,kj -> ik', natorb, ub, natorb)
             n3, exc3, vxc3 = ni.nr_uks(mol, grids, pdft.xc, (dm_ua, dm_ub))
             print('E_xcu   %.6f' % exc3)
+        res_sudd = get_sudd_func(res, pdft.xc.upper())
+        return res, res_sudd
     elif pdft.dens == 'pd':
         #pdft._init_ot_grids(pdft.xc)
         res, res2 = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split, max_memory=pdft.max_memory)
@@ -172,11 +176,14 @@ def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
         res['otc'] = E_otc
         res['otxc'] = E_ot
     else:
-        E_ot =  get_E_ot(ot, dm1s, adm2, mo, max_memory=max_memory)
+        E_ot =  get_E_ot(ot, adm1s, adm2, mo, core, max_memory=max_memory)
         print('E_ot   : %15.8f' %E_ot)
         #return E_ot
         res['otxc'] = E_ot
     return res, (adm1s, adm2, mo, core)
+
+def e_sudd(res):
+    return res['suhf'] + res['xcdft'] - res['k'] - res['c']
 
 def e_supd(res, hyb):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb)
@@ -187,18 +194,26 @@ def e_supd_k(res, hyb, k):
 def e_supd_c(res, hyb, c):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb) + c*res['otc']
 
+def get_sudd_func(res, xc):
+    res_sudd = {'e_sudd': e_sudd(res)}
+    print('E(SU-DD-%s) : %15.8f' % (xc, res_sudd['e_sudd']))
+    return res_sudd
+
 def get_supd_func(res, xc):
     #hyb = 0.25
     k = 2
     c = 0.4
-    res_supd = {'e_supd': e_supd(res, 0.0),
+    res_supd = {'e_supd': e_supd(res, 0.0)}
+    print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
+    if 'otx' in res:
+        res_supd |= {
                 'e_supd_k': e_supd_k(res, 0.25, k),
                 'e_supd_k1': e_supd_k(res, 0.10, k),
                 'e_supd_c': e_supd_c(res, 0.25, c)}
-    print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
-    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.25, k, res_supd['e_supd_k']))
-    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.10, k, res_supd['e_supd_k1']))
-    print('E(SU-%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, 0.25, c, res_supd['e_supd_c']))
+    #if res['otx'] is not None:
+        print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.25, k, res_supd['e_supd_k']))
+        print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.10, k, res_supd['e_supd_k1']))
+        print('E(SU-%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, 0.25, c, res_supd['e_supd_c']))
     return res_supd
 
 def new_decomp(suhf, dm1):
