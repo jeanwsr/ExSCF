@@ -8,9 +8,9 @@ First you need to determine the system is RHF stable or unstable, by doing RHF/U
   + Hard cases of spin-polarized singlet, use `guess.from_frag(xyz, bas, frags, chgs, spins, cycle=50)`
   + Crazy cases. You can try `guess.from_fch_simp` to import a set of orbitals from Gaussian.
 * RHF stable cases. I have no good idea for a general strategy. 
-  + No static correlation cases. Just use RHF orbitals, and SUHF NO will be the same as RHF MO.
-  + Some cases like N2 at 1.0A. We need unconverged UHF orbitals here. Use `guess.mix(xyz, bas, charge)` or `guess.from_frag(xyz, bas, frags, chgs, spins)`. Note that default setting of `mix` and `from_frag` is very loose converging (like only 1-2 cycles of SCF), it's designed for this kind of cases.
-  + Otherwise. I have no idea yet.
+  + No static correlation cases. Just use RHF orbitals, and SUHF NO will be the same as RHF MO. 
+  + Some cases like N2 at 1.1A. We need unconverged UHF orbitals here. Use `guess.mix(xyz, bas, charge)` or `guess.from_frag(xyz, bas, frags, chgs, spins)`. Note that default setting of `mix` and `from_frag` is very loose converging (`conv='loose'`), it's designed for this kind of cases.
+  + For H2 at 0.75A. `conv='loose'` still cannot prevent converging to RHF wavefunction. We need `guess.mix(xyz, bas, cycle=0)`.
 
 More tips
 * Every functions mentioned above return a UHF object.
