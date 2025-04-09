@@ -11,7 +11,7 @@ import ctypes
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
 
-def get_JKg(mol, Pg, no, X):
+def get_JKg(mol, Pg, no, X, hyb=None):
     Jg = []
     Kg = []
     Pg_ortho = []
@@ -64,19 +64,24 @@ def get_JKg(mol, Pg, no, X):
         kg = util2.stack22(kgaa, kgab, kgba, kgbb)
         jg_no = einsum('ji,jk,kl->il', no, jg, no)
         kg_no = einsum('ji,jk,kl->il', no, kg, no)
+        if hyb is not None:
+            kg_no = kg_no * hyb
         Jg.append(jg_no)
         Kg.append(kg_no)
     return Jg, Kg, Pg_ortho
 
 def get_jk(mol, dm, hermi=1, opt=None):
+    if opt is not None:
+        opt = opt.get(None)
     return scf.hf.get_jk(mol, dm, hermi, opt)
 
-def get_k(mol, dm, hermi=1, opt=None):
+def get_k(mol, dm, hermi=1, opt=None, omega=None):
     if opt is not None:
+        opt = opt.get(omega)
         with temporary_env(opt, prescreen='CVHFnrs8_vk_prescreen'):
-            vk = scf.hf.get_jk(mol, dm, hermi, opt, with_j=False)[1]
+            vk = scf.hf.get_jk(mol, dm, hermi, opt, with_j=False, omega=omega)[1]
     else:
-        vk = scf.hf.get_jk(mol, dm, hermi, opt, with_j=False)[1]
+        vk = scf.hf.get_jk(mol, dm, hermi, opt, with_j=False, omega=omega)[1]
 
     return vk
 
@@ -88,14 +93,16 @@ def no2ortho(Pg, no):
         Pg_ortho.append(pg_ortho)
     return Pg_ortho
 
-def get_Gg(mol, Pg, no, X, dm_last=None, Ggao_last=None, opt=None):
+def get_Gg(mol, Pg, no, X, dm_last=None, Ggao_last=None, opt=None, hyb=None, rsh=None):
     Pg_ortho = no2ortho(Pg, no)
-    Gg_ortho, Pgao, Ggao = get_Gg_ortho(mol, Pg_ortho, X, dm_last, Ggao_last, opt)
+    Gg_ortho, Pgao, Ggao = get_Gg_ortho(mol, Pg_ortho, X, dm_last=dm_last, Ggao_last=Ggao_last, opt=opt, 
+                                        hyb=hyb, rsh=rsh)
     Gg = ortho2no(Gg_ortho, no)
     return Gg, Gg_ortho, Pg_ortho, Pgao, Ggao
 
 
-def get_Gg_ortho(mol, Pg_ortho, X, dm_last=None, Ggao_last=None, opt=None, with_df=None):
+def get_Gg_ortho(mol, Pg_ortho, X, dm_last=None, Ggao_last=None, opt=None, with_df=None, 
+                 hyb=None, rsh=None):
     #Pg_ortho = no2ortho(Pg)
     norb = int(Pg_ortho[0].shape[0]/2)
     Pgaa_ao = []
@@ -125,17 +132,27 @@ def get_Gg_ortho(mol, Pg_ortho, X, dm_last=None, Ggao_last=None, opt=None, with_
         old_vj, old_vk, old_Ggab_ao, old_Ggba_ao = Ggao_last
     #print(Pgaabb_ao.shape)
     #nao = Pgaabb_ao.shape[-1]
+    if rsh is not None:
+        omega, alpha, hyb = rsh
     if with_df is not None:
         print('jk: rijk')
         vj,vk = get_jk_df_hermi0(with_df, Pgaabb_ao, hermi=0)
         Ggab_ao = get_jk_df_hermi0(with_df, Pgab_ao, hermi=0, with_j=False)[1]
         Ggba_ao = get_jk_df_hermi0(with_df, Pgba_ao, hermi=0, with_j=False)[1]
+        if rsh is not None:
+            vklr = get_jk_df_hermi0(with_df, Pgaabb_ao, hermi=0, with_j=False, omega=omega)[1]
+            Ggab_ao_lr = get_jk_df_hermi0(with_df, Pgab_ao, hermi=0, with_j=False, omega=omega)[1]
+            Ggba_ao_lr = get_jk_df_hermi0(with_df, Pgba_ao, hermi=0, with_j=False, omega=omega)[1]
     elif dm_last is None:
         print('jk: direct')
         #print('hermi', util2.is_hermi(Pgaabb_ao))
         vj,vk = get_jk(mol, Pgaabb_ao, hermi=0, opt=opt)
         Ggab_ao = get_k(mol, Pgab_ao, hermi=0, opt=opt)
         Ggba_ao = get_k(mol, Pgba_ao, hermi=0, opt=opt)
+        if rsh is not None:
+            vklr = get_k(mol, Pgaabb_ao, hermi=0, opt=opt, omega=omega)
+            Ggab_ao_lr = get_k(mol, Pgab_ao, hermi=0, opt=opt, omega=omega)
+            Ggba_ao_lr = get_k(mol, Pgba_ao, hermi=0, opt=opt, omega=omega)
         # print(vj[3][:4,:4])
         # print(vk[3][:4,:4])
         # print(Ggab_ao[3][:4,:4])
@@ -167,6 +184,14 @@ def get_Gg_ortho(mol, Pg_ortho, X, dm_last=None, Ggao_last=None, opt=None, with_
     ndm = len(Pgab_ao)
     #print(vj.shape)
     #print(vj)
+    if hyb is not None:
+        vk = vk * hyb
+        Ggab_ao = Ggab_ao * hyb
+        Ggba_ao = Ggba_ao * hyb
+        if rsh is not None:
+            vk = vk + vklr * (alpha-hyb)
+            Ggab_ao = Ggab_ao + Ggab_ao_lr * (alpha-hyb)
+            Ggba_ao = Ggba_ao + Ggba_ao_lr * (alpha-hyb)
     Ggaa_ao = vj[:ndm] + vj[ndm:] - vk[:ndm]
     Ggbb_ao = vj[:ndm] + vj[ndm:] - vk[ndm:]
     #Ggbb_ao = scf.hf.get_jk(mol, Pgbb_ao, hermi=0)
@@ -202,17 +227,25 @@ def ortho2no(Gg_ortho, no):
 #class DF(df.DF):
 DF = df.DF
 
-def get_Gg_df(mol, Pg, no, X, dm_last=None, Ggao_last=None, opt=None, with_df=None):
+def get_Gg_df(mol, Pg, no, X, dm_last=None, Ggao_last=None, opt=None, with_df=None, rsh=None):
     Pg_ortho = no2ortho(Pg, no)
     Gg_ortho, Pgao, Ggao = get_Gg_ortho(mol, Pg_ortho, X, #dm_last, Ggao_last, opt, 
-                                        with_df=with_df)
+                                        with_df=with_df, rsh=rsh)
     Gg = ortho2no(Gg_ortho, no)
     return Gg, Gg_ortho, Pg_ortho, Pgao, Ggao
 
 get_jk_df = df.df_jk.get_jk
 #get_k_df = df.df_jk.get_k
 
-def get_jk_df_hermi0(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_tol=1e-13):
+#def get_jk_df(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_tol=1e-13):
+    
+def get_jk_df_hermi0(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_tol=1e-13, omega=None):
+    if omega is None:
+        return _get_jk_df_hermi0(dfobj, dm, hermi, with_j, with_k, direct_scf_tol)
+    with dfobj.range_coulomb(omega) as rsh_df:
+        return _get_jk_df_hermi0(rsh_df, dm, hermi, with_j, with_k, direct_scf_tol)
+
+def _get_jk_df_hermi0(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_tol=1e-13):
     assert (with_j or with_k)
     if (not with_k and not dfobj.mol.incore_anyway and
         # 3-center integral tensor is not initialized

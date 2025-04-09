@@ -239,7 +239,22 @@ def new_decomp(suhf, dm1):
            'j': Ej,
            'k': Ek,
            'c': Ec}
+    #EJ0, EK0 = suhf.get_EJK()
+    #print('Ej0   : %15.8f' % EJ0)
+    #print('Ek0   : %15.8f' % EK0)
     return res
+
+def uhf_decomp(mf, dm=None):
+    if dm is None:
+        dm = mf.make_rdm1()
+    vj, vk = mf.get_jk(dm=dm)
+    veffj = vj[0] + vj[1]
+    veffk = -vk
+    Ej = np.trace(np.dot(veffj, dm[0] + dm[1])) * 0.5
+    Ek = np.trace(np.dot(veffk[0], dm[0]) + np.dot(veffk[1], dm[1])) * 0.5
+    print('E_j    : %15.8f' % Ej)
+    print('E_k    : %15.8f' % Ek)
+
 
 def old_decomp(suhf, dm1):
     dm1t = dm1[0] + dm1[1]

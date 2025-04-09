@@ -157,7 +157,7 @@ def get_xg(suhf, no, mo_occ, Ng):
     occ = na+nb
     C_oo = C_no[:occ, :occ]
     detC = np.linalg.det(C_oo)
-    print('detC', detC)
+    print('detC %.8f'%detC)
     detNg = []
     for ng in Ng:
         detng = np.linalg.det(ng)
@@ -218,6 +218,16 @@ def get_H(suhf, hcore_ortho, no, Pg, Gg, xg):
     H = suhf.integr_beta(trHg, fac='xg')
     print('Hsp + Hph = ', H)
     return trHg, ciH, H
+
+def get_E1(suhf, hcore_no, Pg):
+    trHg = np.zeros(len(Pg))
+    for i, pg in enumerate(Pg):
+        H = np.trace(np.dot(hcore_no, pg))
+        trHg[i] = H
+        #print(i, H*xg[i])
+    E1 = suhf.integr_beta(trHg, fac='xg')
+    print('E1 = %.6f'% E1)
+    return E1
 
 def get_EX(suhf, no, Pg, Kg, xg):
     trXg = np.zeros(len(Pg))
@@ -387,8 +397,10 @@ class SUHF():
         self.level_shift = None
         self.shift_driver = 'def'
         self.incfock = False
+        self.ifsel = 2
 
         self.dft = False
+        self.xc = None
         self.makedm = True
         self.do2pdm = False
         self.tofch = False
@@ -487,6 +499,8 @@ class SUHF():
                 self.diis = scf.diis.CDIIS()
             elif self.diis_driver == 'rev1':
                 self.diis = util2.CDIISrev1()
+            elif self.diis_driver == 'rev2' or self.diis_driver == 'plain':
+                self.diis = util2.CDIISrev2()
             self.diis.space = self.diis_space
             #self.diis.damp = self.diis_damp
             print('DIIS: %s' % self.diis.__class__)
@@ -544,11 +558,38 @@ class SUHF():
         if self.debug:
             print('hcore (ortho)\n', self.hcore_ortho)
         #hf.direct_scf_tol = 1e-13
-        self.vhfopt = hf.init_direct_scf()
+        #self.vhfopt = hf.init_direct_scf()
+        self.vhfopt = {None: hf.init_direct_scf(self.mol)}
 
         if self.dft:
-            self.ksgrids = sudft.set_grids(self.mol)
-            self.xc = self.guesshf.xc
+            if self.xc is None:
+                if getattr(self.guesshf, 'xc', None) is None:
+                    raise AttributeError('self.xc needs to be set')
+                else:
+                    self.xc = self.guesshf.xc
+            #ni = numint.NumInt()
+            #self._numint = ni
+            self._ks, self.ksgrids = sudft.set_grids(self.mol)
+            #self.xc = self.guesshf.xc
+            self._ks.xc = self.xc
+            self._numint = self._ks._numint
+            ni = self._numint
+            omega, alpha, hyb = ni.rsh_and_hybrid_coeff(self.xc, spin=self.mol.spin)
+            self.hyb = hyb
+            print('dft on')
+            print(f'xc: {self.xc}, hyb: {hyb}')
+            if omega > 1e-10:
+                #raise NotImplementedError('Range Separation not Implemented')
+                self.omega = omega
+                self.alpha = alpha
+                print(f'omega: {omega}, alpha: {alpha}')
+                mol = self.mol
+                with mol.with_range_coulomb(omega):
+                    self.vhfopt[omega] = hf.init_direct_scf(mol)
+            else:
+                self.omega = None
+        else:
+            self.hyb = None
         mo_occ = get_occ(self)
         self.mo_occ = mo_occ
         self.mom = False
@@ -665,17 +706,21 @@ class SUHF():
             S2 = get_S2(self, Pg_ortho)
             Xg, Xg_int, Yg = get_Yg(self, Dg, Ng, self.dm_no, na+nb)
             F_last = F_mod_ortho
-            Feff_ortho,  F_mod_ortho = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
+            Feff_ortho,  F_mod_ortho0 = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
             E_suhf = self.energy_nuc + H_suhf
             #print('E(SUHF) = %15.8f' % E_suhf)
-            Faa = F_mod_ortho[:norb, :norb]
-            Fbb = F_mod_ortho[norb:, norb:]
-            F_mod_ortho = np.array([Faa,Fbb])
+            if self.ifsel == 1:
+                F_mod_ortho = Feff_ortho
+            elif self.ifsel == 2:
+                Faa = F_mod_ortho0[:norb, :norb]
+                Fbb = F_mod_ortho0[norb:, norb:]
+                F_mod_ortho = np.array([Faa,Fbb])
             if self.dft:
                 exc, vxc = self.ddft()
                 E_suhf += exc
                 # dft for noiter only, Fock is not well defined
-                F_mod_ortho = F_mod_ortho + vxc
+                vxc_ortho = einsum('ji,tjk,kl->til', X, vxc, X)
+                F_mod_ortho = F_mod_ortho + vxc_ortho
 
             self.E_suhf = E_suhf
             if self.diis_on and cyc >= self.diis_start_cyc:
@@ -844,18 +889,50 @@ class SUHF():
         return dfmf
 
     def get_uhf_veff(self, dm_reg):
-        veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+        if self.dft:
+            hyb = self.hyb
+            #veff = self._ks.get_veff(dm=dm_reg)
+            vj, vk = scf.hf.get_jk(self.mol, dm_reg, vhfopt=self.vhfopt[None])
+            vk = vk * hyb
+            if self.omega is not None:
+                omega=self.omega
+                alpha=self.alpha
+                vklr = scf.hf.get_jk(self.mol, dm_reg, with_j=False, vhfopt=self.vhfopt[omega])[1]
+                vk = vk + vklr * (alpha-hyb) 
+            veff = vj[0] + vj[1] - vk
+        else:
+            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt[None])
         return veff
 
     def get_Gg(self, dm_last=None, Ggao_last=None):
-        return jk.get_Gg(self.mol, self.Pg, self.no, self.X, dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt)
+        if self.omega is not None:
+            rsh = self.omega, self.alpha, self.hyb
+        else:
+            rsh = None
+        return jk.get_Gg(self.mol, self.Pg, self.no, self.X, dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt, 
+                         hyb=self.hyb, rsh=rsh)
 
-    def get_JKg(self):
-        return jk.get_JKg(self.mol, self.Pg, self.no, self.X)[:2]
+    def get_JKg(self, hyb=None):
+        if self.omega is not None:
+            raise NotImplementedError()
+        return jk.get_JKg(self.mol, self.Pg, self.no, self.X, hyb=hyb)[:2]
 
-    def get_EX(self):
+    def get_EJK(self):
         Jg, Kg = self.get_JKg()
-        return get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        EJ = get_EX(self, self.no, self.Pg, Jg, self.xg)[1]
+        EK = get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        Jg, Kg = self.get_JKg(hyb=self.hyb)
+        EK1 = get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        print('EJ = %.8f, EK = %.8f, EK1 = %.8f' % (EJ, EK, EK1))
+        return EJ, EK
+    
+    def get_E1(self):
+        E1 = get_E1(self, self.hcore_no, self.Pg)
+        return E1
+
+    def decomp(self):
+        self.get_EJK()
+        self.get_E1()
     
     fchk = util2.fchk
     
@@ -863,19 +940,26 @@ class SUHF():
         if self.dm_reg is None:
             X = self.X
             self.dm_reg = einsum('ij,tjk,lk->til', X, self.dm_ortho, X) # regular ao
-        ni = numint.NumInt()
-        if xc is not None:
-            self.ksgrids = sudft.set_grids(self.mol)
-        else:
+        if xc is None:
             xc = self.xc
+        #ni = numint.NumInt()
+        ni = self._numint
+        if self.ksgrids is None:
+            _, self.ksgrids = sudft.set_grids(self.mol)
         n, exc, vxc = ni.nr_uks(self.mol, self.ksgrids, xc, self.dm_reg)
-        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=self.mol.spin)
-        if omega > 1e-10: raise NotImplementedError('Range Separation not Implemented')
-        if hyb > 1e-10:
-            ex_hf = self.get_EX()
-            exc -= (1-hyb)*ex_hf
-        print('e_dft-e_hf(%s): %.6f ' % (xc,exc))
+        #omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=self.mol.spin)
+        #if omega > 1e-10: raise NotImplementedError('Range Separation not Implemented')
+        #if hyb > 1e-10:
+        #    ex_hf = self.get_EX()
+        #    exc -= (1-hyb)*ex_hf
+        #print('e_dft-e_hf(%s): %.6f ' % (xc,exc))
         return exc, vxc
+
+    def to_hf(self):
+        self.dft = False
+        self.hyb = None
+        self.omega = None
+        return self
 
     def regular(self):
         X = self.X
@@ -934,10 +1018,27 @@ class DFSUHF(SUHF):
         self.__dict__.update(smf.__dict__)
 
     def get_Gg(self, dm_last=None, Ggao_last=None):
+        if self.omega is not None:
+            rsh = self.omega, self.alpha, self.hyb
+        else:
+            rsh = None
         return jk.get_Gg_df(self.mol, self.Pg, self.no, self.X, #dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt
-                            with_df=self.with_df)
+                            with_df=self.with_df, rsh=rsh)
 
     def get_uhf_veff(self, dm_reg):
-        vj, vk = jk.get_jk_df(self.with_df, dm_reg, hermi=0)
+        if self.dft:
+            hyb = self.hyb
+            dfobj = self.with_df
+            #veff = self._ks.get_veff(dm=dm_reg)
+            vj, vk = jk.get_jk_df(dfobj, dm_reg, hermi=0)
+            vk = vk * hyb
+            if self.omega is not None:
+                omega=self.omega
+                alpha=self.alpha
+                with dfobj.range_coulomb(omega) as rsh_df:
+                    vklr = jk.get_jk_df(rsh_df, dm_reg, with_j=False, hermi=0)[1]
+                vk = vk + vklr * (alpha-hyb) 
+        else:
+            vj, vk = jk.get_jk_df(self.with_df, dm_reg, hermi=0)
         veff = vj[0] + vj[1] - vk
         return veff

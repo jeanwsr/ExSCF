@@ -227,3 +227,5 @@ class CDIISrev2(diis.CDIIS):
         if self.rollback > 0 and len(self._bookkeep) == self.space:
             self._bookkeep = self._bookkeep[-self.rollback:]
         return xnew
+    
+DIISplain = CDIISrev2
