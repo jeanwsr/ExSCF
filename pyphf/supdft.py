@@ -21,11 +21,31 @@ if pdft_backend == 'mrh':
 elif pdft_backend == 'pyscf':
     try:
         #from pyscf.mcpdft.mcpdft import _PDFT
+        #from pyscf.mcpdft import otfnal
         from pyscf.mcpdft.otfnal import energy_ot as get_E_ot
     except:
         print('Warning: pyscf.mcpdft not found')
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
+
+# otfnal.OT_PRESET |={
+#     # Reparametrized-M06L: rep-M06L
+#     # MC23 = { '0.2952*HF + (1-0.2952)*rep-M06L, 0.2952*HF + (1-0.2952)*rep-M06L'}}
+#     # XC_ID_MGGA_C_M06_L = 233
+#     # XC_ID_MGGA_X_M06_L = 203
+#     'MC23pure':{
+#         'xc_base':'M06L',
+#         'ext_params':{203: np.array([3.352197, 6.332929e-01, -9.469553e-01, 2.030835e-01,
+#                                      2.503819, 8.085354e-01, -3.619144, -5.572321e-01,
+#                                      -4.506606, 9.614774e-01, 6.977048, -1.309337, -2.426371,
+#                                      -7.896540e-03, 1.364510e-02, -1.714252e-06, -4.698672e-05, 0.0]),
+#                         233: np.array([0.06, 0.0031, 0.00515088, 0.00304966, 2.427648, 3.707473,
+#                                        -7.943377, -2.521466, 2.658691, 2.932276, -8.832841e-01,
+#                                        -1.895247, -2.899644, -5.068570e-01, -2.712838, 9.416102e-02,
+#                                        -3.485860e-03, -5.811240e-04, 6.668814e-04, 0.0, 2.669169e-01,
+#                                        -7.563289e-02, 7.036292e-02, 3.493904e-04, 6.360837e-04, 0.0, 1e-10])}
+#         }
+# }
 
 
 @timing
@@ -188,6 +208,9 @@ def e_sudd(res):
 def e_supd(res, hyb):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb)
 
+def e_supd_hyb_i(res, hyb):
+    return res['suhf'] + res['otxc'] + (- res['k'] - res['c']) * (1.0 - hyb) 
+
 def e_supd_k(res, hyb, k):
     return res['suhf'] + (res['otx'] - res['k'] - res['c']) * (1.0 - hyb) + (1.0-hyb**k)*res['otc']
 
@@ -199,11 +222,22 @@ def get_sudd_func(res, xc):
     print('E(SU-DD-%s) : %15.8f' % (xc, res_sudd['e_sudd']))
     return res_sudd
 
+intrinsic_hyb = {
+    'MC23': 0.2952,
+    'TMC23': 0.2952,
+    'TM06L29':0.2952,
+}
+
 def get_supd_func(res, xc):
     #hyb = 0.25
     k = 2
     c = 0.4
-    res_supd = {'e_supd': e_supd(res, 0.0)}
+    if xc in intrinsic_hyb:
+        hyb = intrinsic_hyb[xc]
+        res_supd = {'e_supd': e_supd_hyb_i(res, hyb)}
+    else:
+        #hyb = 0.0
+        res_supd = {'e_supd': e_supd(res, 0.0)}
     print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
     if 'otx' in res:
         res_supd |= {

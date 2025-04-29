@@ -499,6 +499,7 @@ class SUHF():
                 self.diis = scf.diis.CDIIS()
             elif self.diis_driver == 'rev1':
                 self.diis = util2.CDIISrev1()
+                #self.diis.damp = self.diis_damp
             elif self.diis_driver == 'rev2' or self.diis_driver == 'plain':
                 self.diis = util2.CDIISrev2()
             self.diis.space = self.diis_space
@@ -590,6 +591,7 @@ class SUHF():
                 self.omega = None
         else:
             self.hyb = None
+            self.omega = None
         mo_occ = get_occ(self)
         self.mo_occ = mo_occ
         self.mom = False
@@ -723,14 +725,19 @@ class SUHF():
                 F_mod_ortho = F_mod_ortho + vxc_ortho
 
             self.E_suhf = E_suhf
+            if old_suhf is not None:
+                dE = E_suhf - old_suhf
+                energy_rise = dE > 1e-7
+            else:
+                energy_rise = False
             if self.diis_on and cyc >= self.diis_start_cyc:
                 s1e = np.eye(norb)
                 errvec = scf.diis.get_err_vec(s1e, self.dm_ortho, F_mod_ortho, None)
                 print('diis-norm(errvec)=%.6g'% np.linalg.norm(errvec))
-                if cyc < self.diis_start_damp:
-                    self.diis.damp = 0.0
-                else:
+                if cyc >= self.diis_start_damp and energy_rise:
                     self.diis.damp = self.diis_damp
+                else:
+                    self.diis.damp = 0.0
                 print('diis_damp = %g' % self.diis.damp)
                 F_mod_ortho = self.diis.update(s1e, self.dm_ortho, F_mod_ortho, f_prev=F_last)
                 print('F(mod,ortho) updated with CDIIS')
@@ -749,7 +756,6 @@ class SUHF():
                 break  
             mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
-            self.mo_e = mo_e
             util2.dump_moe(mo_e, na, nb)
             dm_ortho = make_dm(mo_ortho, mo_occ)
             if self.debug or self.printmo:
@@ -758,6 +764,7 @@ class SUHF():
                 print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
             self.dm_ortho = dm_ortho
             self.mo_ortho = mo_ortho
+            self.mo_e = mo_e
             self.regular()
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
@@ -784,9 +791,10 @@ class SUHF():
         old_dm = self.dm_ortho
         old_Pgao = None
         old_Ggao = None
-        if self.level_shift is not None:
+        if self.level_shift is not None and not noiter:
             print('**** Extra Cycle %d ****' % cyc)
             #veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            dm_reg = self.dm_reg
             veff = self.get_uhf_veff(dm_reg)
             veff_ortho = einsum('ji,tjk,kl->til', X, veff, X)
             if self.debug:
@@ -823,20 +831,25 @@ class SUHF():
             Xg, Xg_int, Yg = get_Yg(self, Dg, Ng, self.dm_no, na+nb)
             Feff_ortho, F_mod_ortho = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
             E_suhf = self.energy_nuc + H_suhf
+            if self.ifsel == 1:
+                F_mod_ortho = Feff_ortho
+            elif self.ifsel == 2:
+                Faa = F_mod_ortho0[:norb, :norb]
+                Fbb = F_mod_ortho0[norb:, norb:]
+                F_mod_ortho = np.array([Faa,Fbb])
+            if self.dft:
+                exc, vxc = self.ddft()
+                E_suhf += exc
+                # dft for noiter only, Fock is not well defined
+                vxc_ortho = einsum('ji,tjk,kl->til', X, vxc, X)
+                F_mod_ortho = F_mod_ortho + vxc_ortho
+            
             self.E_suhf = E_suhf
-            Faa = F_mod_ortho[:norb, :norb]
-            Fbb = F_mod_ortho[norb:, norb:]
-            F_mod_ortho = np.array([Faa,Fbb])
             mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
+            util2.dump_moe(mo_e, na, nb)
             mo_ortho = np.array(mo_ortho)
             dm_ortho = make_dm(mo_ortho, mo_occ)
-            if self.mom and cyc >= self.mom_start_cyc:
-                mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
-            else:
-                mo_occ = get_occ(self, mo_e)
-            self.mo_occ = mo_occ
-            util2.dump_moe(mo_e, na, nb)
-            if self.debug:
+            if self.debug or self.printmo:
                 #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
                 print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
                 print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
@@ -844,6 +857,12 @@ class SUHF():
             self.mo_ortho = mo_ortho
             self.mo_e = mo_e
             self.regular()
+            if self.mom and cyc >= self.mom_start_cyc:
+                mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
+            else:
+                mo_occ = get_occ(self, mo_e)
+            self.mo_occ = mo_occ
+
             #if old_suhf is not None:
             dE = E_suhf - old_suhf
             ddm = dm_ortho - old_dm

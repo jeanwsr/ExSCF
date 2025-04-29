@@ -4,6 +4,7 @@ from pyscf.lib import temporary_env, logger
 from pyphf import util2
 from functools import partial
 import numpy as np
+import scipy
 from pyscf import df
 from pyscf.ao2mo import _ao2mo
 import ctypes
@@ -280,7 +281,7 @@ def _get_jk_df_hermi0(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_t
             # uses numpy.matmul
             vj += dmtril.dot(eri1.T).dot(eri1)
     else:
-        orbol, orbor = df.grad.rhf._decompose_rdm1_svd (None, dfobj.mol, dms)
+        orbol, orbor = _decompose_rdm1_svd (None, dfobj.mol, dms)
 
         max_memory = dfobj.max_memory - lib.current_memory()[0]
         blksize = max(4, int(min(dfobj.blockdim, max_memory*.3e6/8/nao**2)))
@@ -319,3 +320,38 @@ def _get_jk_df_hermi0(dfobj, dm, hermi=0, with_j=True, with_k=True, direct_scf_t
     if with_k: vk = vk.reshape(dm_shape)
     logger.timer(dfobj, 'df vj and vk', *t0)
     return vj, vk
+
+def _decompose_rdm1_svd (mf_grad, mol, dm):
+    '''Decompose dms as U.Vh using SVD
+
+    Args:
+        mf_grad : instance of :class:`Gradients`
+        mol : instance of :class:`gto.Mole`
+        dm : ndarray or sequence of ndarrays of shape (nao,nao)
+            Density matrices
+
+    Returns:
+        orbol : list of ndarrays of shape (nao,*)
+            Contains non-null eigenvectors of density matrix
+        orbor : list of ndarrays of shape (nao,*)
+            Contains orbol * eigenvalues (occupancies)
+    '''
+    nao = mol.nao
+    dms = np.asarray(dm).reshape (-1,nao,nao)
+    orbor = []
+    orbol = []
+    for dm in dms:
+        u, s, vh = _svd (dm)
+        idx = np.abs (s)>1e-8
+        orbol.append (np.asfortranarray (u[:,idx]))
+        orbor.append (np.asfortranarray (einsum('i,ip->pi', s[idx], vh[idx])))
+
+    return orbol, orbor
+
+def _svd(a):
+    try:
+        u, s, vh = np.linalg.svd(a)
+    except np.linalg.LinAlgError:
+        print('Warning: SVD failed, using gesvd')
+        u, s, vh = scipy.linalg.svd(a, lapack_driver='gesvd')
+    return u, s, vh
