@@ -78,20 +78,42 @@ def tofchmo(oldfch, orb, occ, S, flag='SUHFMO'):
     py2fch(fch, nbfb, nifb, orb_b, Sdiag, 'b', occ_b, True)
     
 
-def dump_moe(moe, na, nb):
+def dump_moe(mf, moe, na, nb, mo_occ=None, orbsym=None):
     ea = moe[0]
     eb = moe[1]
     avir = len(ea) - na
     bvir = len(eb) - nb
     print('Alpha occ %d vir %d; Beta occ %d vir %d' % (na, avir, nb, bvir))
+    if not mf.symm:
+        dump_moe_part(ea, na, 'Alpha')
+        dump_moe_part(eb, nb, 'Beta')
+    else:
+        mol = mf.mol
+        pref = ['Alpha', 'Beta']
+        for ispin in range(2):
+            for i, ir in enumerate(mol.irrep_id):
+                irname = mol.irrep_name[i]
+                ir_idx = (orbsym[ispin] == ir)
+                #ir_idxb = (orbsymb == ir)
+                nocc = np.count_nonzero(mo_occ[ispin][ir_idx])
+                e_ir = moe[ispin][ir_idx]
+                #print(f'irrep {irname}')
+                dump_moe_part(e_ir, nocc, pref[ispin], irname)
+
+def dump_moe_part(ea, na, prefix='Alpha', ir=None):
     amin = max(0, na-6)
     amax = min(na+6, len(ea))
-    print('Alpha energies: ', ea[amin:na], '<- HOMO')
-    print('         LUMO-> ', ea[na:amax])
-    bmin = max(0, nb-6)
-    bmax = min(nb+6, len(eb))
-    print('Beta energies:  ', eb[bmin:nb], '<- HOMO')
-    print('         LUMO-> ', eb[nb:bmax])
+    str1=f'{prefix} energies'
+    if ir is not None:
+        str1 += f'({ir})'
+    else:
+        str1 += '    '
+    print(str1,': ', ea[amin:na], '<- HOMO')
+    print('             LUMO-> ', ea[na:amax])
+    # bmin = max(0, nb-6)
+    # bmax = min(nb+6, len(eb))
+    # print('Beta energies:  ', eb[bmin:nb], '<- HOMO')
+    # print('         LUMO-> ', eb[nb:bmax])
 
 def dump_occ(occ, full=1.0, ratio=0.99):
     s = ''

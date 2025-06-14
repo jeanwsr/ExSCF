@@ -1,7 +1,11 @@
-from pyphf import suscf, sudft
+from pyphf import suscf, sudft, symm
 
 __version__ = '0.5.0'
 
+def SUHF(mf):
+    if not mf.mol.symmetry or mf.mol.groupname=='C1':
+        return suscf.SUHF(mf)
+    else:
+        return symm.SymAdaptedSUHF(mf)
 
-SUHF = suscf.SUHF
 SUDFT  = sudft.SUDFT

@@ -5,6 +5,7 @@ from pyscf.lib import chkfile
 import pyscf.dft.numint as numint
 from automr import mcpdft
 from automr.mcpdft import sum_adm2
+from automr.numint import nr_rks_abs, nr_uks_abs
 import numpy as np
 from functools import partial
 #import time
@@ -72,6 +73,9 @@ def kernel(pdft, suhf):
         ni = numint.NumInt()
         n, exc, vxc = ni.nr_uks(mol, grids, pdft.xc, dmdefm)
         print('E_xcdft %.6f' % exc)
+        print(f'exc = {exc}')
+        nabs, exc1, vxc1 = nr_uks_abs(ni, mol, grids, pdft.xc, dmdefm)
+        print(f'n = {nabs}, exc = {exc1}')
         res['xcdft'] = exc
         pdft.res = res
         if pdft.testd:

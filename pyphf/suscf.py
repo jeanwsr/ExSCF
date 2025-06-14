@@ -364,15 +364,15 @@ class SUHF():
         max_cycle: 70
         diis_on: 
         level_shift:
-        setmom:
     Output:
         E_suhf:
         mo_reg:
         dm_reg: deformed density matrix
-        suhf_dm:
+        suhf_dm: 1pdm
         natocc: SUHF natural orbital occupation number
         natorb: SUHF natural orbital (regular basis) 
     '''
+    orbsym = None
 
     def __init__(self, guesshf=None):
         self.guesshf = guesshf
@@ -401,6 +401,7 @@ class SUHF():
 
         self.dft = False
         self.xc = None
+        self.symm = False
         self.makedm = True
         self.do2pdm = False
         self.tofch = False
@@ -592,7 +593,7 @@ class SUHF():
         else:
             self.hyb = None
             self.omega = None
-        mo_occ = get_occ(self)
+        mo_occ = self.get_occ()
         self.mo_occ = mo_occ
         self.mom = False
         if self.setmom is not None:
@@ -754,9 +755,9 @@ class SUHF():
                 self.regular()
                 print(' E = %15.8f' % E_suhf)
                 break  
-            mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
+            mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
-            util2.dump_moe(mo_e, na, nb)
+            #print(mo_ortho)
             dm_ortho = make_dm(mo_ortho, mo_occ)
             if self.debug or self.printmo:
                 #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
@@ -769,8 +770,9 @@ class SUHF():
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
             else:
-                mo_occ = get_occ(self, mo_e)
+                mo_occ = self.get_occ(mo_e, mo_ortho)
             self.mo_occ = mo_occ
+            self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
             t10 = time.time()
             print('time for xg, H, S2, Yg, Feff: %.3f' % (t10-t06))
         
@@ -845,8 +847,7 @@ class SUHF():
                 F_mod_ortho = F_mod_ortho + vxc_ortho
             
             self.E_suhf = E_suhf
-            mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
-            util2.dump_moe(mo_e, na, nb)
+            mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
             dm_ortho = make_dm(mo_ortho, mo_occ)
             if self.debug or self.printmo:
@@ -860,8 +861,9 @@ class SUHF():
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
             else:
-                mo_occ = get_occ(self, mo_e)
+                mo_occ = self.get_occ(mo_e, mo_ortho)
             self.mo_occ = mo_occ
+            self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
 
             #if old_suhf is not None:
             dE = E_suhf - old_suhf
@@ -896,6 +898,13 @@ class SUHF():
         print('time tot: %.3f' % (t_end-t_start))
         print('Date: %s' % time.ctime())
         return E_suhf, self.conv
+    
+    get_occ = get_occ
+
+    dump_moe = util2.dump_moe
+
+    def Diag_Feff(self, F):
+        return Diag_Feff(F)
 
     def density_fit(self, auxbasis=None):
         #with_df = jk.DF(self.mol)
@@ -905,7 +914,7 @@ class SUHF():
         #with_df.auxbasis = auxbasis
         dfmf = DFSUHF(self)
         dfmf.with_df = with_df
-        return dfmf
+        return lib.set_class(dfmf, (DFSUHF, self.__class__))
 
     def get_uhf_veff(self, dm_reg):
         if self.dft:
@@ -979,6 +988,27 @@ class SUHF():
         self.hyb = None
         self.omega = None
         return self
+    
+    def mo_reg2ortho(self, mo):
+        if mo.ndim == 3:
+            mo_ortho = einsum('ij,tjk->tik', self.XS, mo)
+        elif mo.ndim == 2:
+            mo_ortho = einsum('ij,jk->ik', self.XS, mo)
+        else:
+            raise ValueError('mo should be 2D or 3D array')
+        return mo_ortho
+    
+    def mo_ortho2reg(self, mo):
+        if mo.ndim == 3:
+            mo_reg = einsum('ij,tjk->tik', self.X, mo)
+        elif mo.ndim == 2:
+            mo_reg = einsum('ij,jk->ik', self.X, mo)
+        else:
+            raise ValueError('mo should be 2D or 3D array')
+        return mo_reg
+    
+    def f_ortho2reg(self, f):
+        return einsum('ji,tjk,kl->til', self.XS, f, self.XS)
 
     def regular(self):
         X = self.X
@@ -1033,6 +1063,9 @@ def shift_down_occ(s, dm, f, shift):
     return f
 
 class DFSUHF(SUHF):
+
+    __name_mixin__ = 'DF'
+
     def __init__(self, smf):
         self.__dict__.update(smf.__dict__)
 
