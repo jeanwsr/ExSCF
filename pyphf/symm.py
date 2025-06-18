@@ -116,6 +116,7 @@ class SymAdaptedSUHF(suscf.SUHF):
 
             print('alpha irrep_nelec = %s'% noccsa)
             print('beta  irrep_nelec = %s'% noccsb)
+            #print(mo_occ)
             #hf_symm._dump_mo_energy(mol, mo_e[0], mo_occ[0], ehomo, elumo,
             #                        orbsyma, 'alpha-', verbose=4)
             #hf_symm._dump_mo_energy(mol, mo_e[1], mo_occ[1], ehomo, elumo,

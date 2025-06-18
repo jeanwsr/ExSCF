@@ -55,8 +55,8 @@ def find_NO(suhf, dm, mo_occ):
     cut_no = suhf.cut_no
     #dm = dm*(-1)
     #print(dm)
-    occa, occb = mo_occ
-    vira, virb = get_vir(occa, occb)
+    #occa, occb = mo_occ
+    #vira, virb = get_vir(occa, occb)
     na, nb = suhf.nelec
     #print(occa,occb,vira, virb)
     ev_a, v_a = eig(dm[0]*(-1))
@@ -86,8 +86,9 @@ def find_NO(suhf, dm, mo_occ):
         v = np.hstack((v_a1, v_b1, v_a2, v_b2))[:,:pa+pb]
     #v = np.hstack((v, np.zeros((v.shape[0], v.shape[0]-pa-pb))))
     if suhf.debug or suhf.printmo:
-        print('NO vec')
-        print(v)
+        print(f'NO vec {v.shape}')
+        #print(v)
+        #print(v[:43,:43])
     dm_expd = np.hstack(
         (np.vstack((dm[0], np.zeros(dm[0].shape))), 
         np.vstack((np.zeros(dm[1].shape), dm[1])))
@@ -101,6 +102,9 @@ def find_NO(suhf, dm, mo_occ):
     return dm_no, dm_expd, v
 
 def get_Ng(grids, no, dm, occ):
+    '''
+    dm: dm in no basis
+    '''
     Dg = []
     Ng = []
     Pg = []
@@ -133,11 +137,16 @@ def get_Ng(grids, no, dm, occ):
 def expd(mo, mo_occ):
     C_a, C_b = mo
     occa, occb = mo_occ
-    vira, virb = get_vir(occa, occb)
+    #vira, virb = get_vir(occa, occb)
     C_a1 = C_a[:,occa==1]
-    C_a2 = C_a[:,vira==1]
+    C_a2 = C_a[:,occa==0]
     C_b1 = C_b[:,occb==1]
-    C_b2 = C_b[:,virb==1]
+    C_b2 = C_b[:,occb==0]
+    #print('C_a1', C_a1.shape)
+    #print(C_a1[:43,:43])
+    #print(C_a2)
+    #print(C_b1[:39,:39])
+    #print(C_b2)
     C_org = np.hstack((
         np.vstack((C_a1, np.zeros(C_a1.shape))),
         np.vstack((np.zeros(C_b1.shape), C_b1)),
@@ -147,6 +156,9 @@ def expd(mo, mo_occ):
     return C_org
 
 def get_xg(suhf, no, mo_occ, Ng):
+    #print('mo_ortho, mo_occ')
+    #print(suhf.mo_ortho[0][:43,:43])
+    #print(mo_occ[0])
     C_org = expd(suhf.mo_ortho, mo_occ)
     #print(C_org)
     C_no = einsum('ji,jk->ik', no, C_org)
@@ -156,6 +168,8 @@ def get_xg(suhf, no, mo_occ, Ng):
     na,nb = suhf.nelec
     occ = na+nb
     C_oo = C_no[:occ, :occ]
+    #print(C_oo[:43,:43])
+    #print(C_oo[43:43+39,43:43+39])
     detC = np.linalg.det(C_oo)
     print('detC %.8f'%detC)
     detNg = []
@@ -758,21 +772,21 @@ class SUHF():
             mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
             #print(mo_ortho)
-            dm_ortho = make_dm(mo_ortho, mo_occ)
-            if self.debug or self.printmo:
-                #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
-                print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
-                print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
-            self.dm_ortho = dm_ortho
             self.mo_ortho = mo_ortho
             self.mo_e = mo_e
-            self.regular()
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
             else:
                 mo_occ = self.get_occ(mo_e, mo_ortho)
             self.mo_occ = mo_occ
             self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
+            dm_ortho = make_dm(mo_ortho, mo_occ)
+            if self.debug or self.printmo:
+                #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
+                print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
+                print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
+            self.dm_ortho = dm_ortho
+            self.regular()
             t10 = time.time()
             print('time for xg, H, S2, Yg, Feff: %.3f' % (t10-t06))
         
@@ -849,21 +863,21 @@ class SUHF():
             self.E_suhf = E_suhf
             mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
-            dm_ortho = make_dm(mo_ortho, mo_occ)
-            if self.debug or self.printmo:
-                #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
-                print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
-                print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
-            self.dm_ortho = dm_ortho
             self.mo_ortho = mo_ortho
             self.mo_e = mo_e
-            self.regular()
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
             else:
                 mo_occ = self.get_occ(mo_e, mo_ortho)
             self.mo_occ = mo_occ
             self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
+            dm_ortho = make_dm(mo_ortho, mo_occ)
+            if self.debug or self.printmo:
+                #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
+                print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
+                print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
+            self.dm_ortho = dm_ortho
+            self.regular()
 
             #if old_suhf is not None:
             dE = E_suhf - old_suhf
