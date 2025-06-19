@@ -21,7 +21,7 @@ Of course we need numpy, scipy, etc., but these are also required by PySCF, so t
   + 1pdm, natural orbitals, 2pdm
 * SU-PDFT
 
- not fully tested, or not correct yet:
+ not fully tested, or not fully implemented yet:
 * SUHF+DFT, SUHF+*f*DFT, SUHF+*fc*DFT
 * CAS+*f*DFT, CAS-DFT2
 * DeltaSCF with MOM
