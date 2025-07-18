@@ -487,7 +487,9 @@ class SUHF():
             self.guesshf = hf
             print('****** End of UHF ********')
         elif self.chkfile is not None:
-            self.mol, suinfo = util2.load_chk(self.chkfile)
+            if os.path.isfile(self.chkfile):
+                self.mol, suinfo = util2.load_chk(self.chkfile)
+            #self.dumpchk = True
         else:
             guess = ''' 
             guesshf: a UHF object
@@ -496,7 +498,8 @@ class SUHF():
             '''
             raise AttributeError('You must provide one of below as a guess:' + guess)
         if self.dumpchk:
-            self.chkfile = self.output + '_su.pchk'
+            if self.chkfile is None:
+                self.chkfile = self.output + '_su.pchk'
             print('chkfile:  %s  # the file store suhf info' % self.chkfile)
         #self.chkfile2 = self.output + '_no.pchk'
         #print('chkfile2: %s # the file store suhf NO' % self.chkfile2)

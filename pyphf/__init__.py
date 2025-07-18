@@ -1,4 +1,4 @@
-from pyphf import suscf, sudft, symm
+from pyphf import suscf, supdft, sudft, symm
 
 __version__ = '0.5.0'
 
