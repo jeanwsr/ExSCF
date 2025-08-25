@@ -1,3 +1,16 @@
+version dev
+--------------------------
+* inc-fock for direct SCF
+* add DF SCF
+* add SU-rsDFT
+* non-hermi DF JK
+* more PDFT functionals
+* add symmetry for SCF
+
+version 0.5 (Mar 3, 2025)
+--------------------------
+* SU-PDFT update, change pdft backend to pyscf, print SU-PDFT energies
+* allow modifying diis space, diis driver
 
 version 0.4.3 (Jun 23, 2022)
 --------------------------
