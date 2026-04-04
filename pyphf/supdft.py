@@ -96,7 +96,7 @@ def kernel(pdft, suhf):
         res, res2 = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split, max_memory=pdft.max_memory)
         pdft.res = res
         res_supd = get_supd_func(res, pdft.xc.upper())
-        return res, res2
+        return res, res2 
 
 def dump_dm2(adm2s, na):
     for i in range(na):
@@ -156,10 +156,12 @@ def load_adm(h5file):
 
 @timing
 def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
+    adm1s, adm2, mo, core = get_adm(pdft, suhf, usemo)
+    return compute_pdft_e(pdft, do_split=do_split, max_memory=max_memory)
+
+@timing
+def get_adm(pdft, suhf, usemo):
     print('pdft backend: %s' % pdft_backend)
-    #ot = _init_ot_grids (ot, suhf.mol)
-    if do_split:
-        xfnal, cfnal = ot.split_x_c()
     dm1s = np.array(suhf.suhf_dm)
     if usemo:
         #_, [core, act, ext] = util2.dump_occ(suhf.natocc[2], 2.0, 0.99999)
@@ -187,6 +189,18 @@ def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
     #dm1s += np.dot (mo_core, moH_core)[None,:,:]
     if pdft.dump_adm:
         dump_adm(pdft.dump_adm, adm1s, adm2, mo, core)
+    pdft.adm_cache = (adm1s, adm2, mo, core)
+    return adm1s, adm2, mo, core
+
+@timing
+def compute_pdft_e(pdft, ot=None, do_split=False, adm1s=None, adm2=None, mo=None, core=None, max_memory=4000):
+    if hasattr(pdft, 'adm_cache') and adm1s is None:
+        adm1s, adm2, mo, core = pdft.adm_cache
+    if pdft.otfnal is not None and ot is None:
+        ot = pdft.otfnal
+    #ot = _init_ot_grids (ot, suhf.mol)
+    if do_split:
+        xfnal, cfnal = ot.split_x_c()
     res = pdft.res
     if do_split:
         E_otx =  get_E_ot(xfnal, adm1s, adm2, mo, core, max_memory=max_memory)
@@ -204,6 +218,8 @@ def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
         print('E_ot   : %15.8f' %E_ot)
         #return E_ot
         res['otxc'] = E_ot
+        res.pop('otx', None)
+        res.pop('otc', None)
     return res, (adm1s, adm2, mo, core)
 
 def e_sudd(res):
@@ -377,3 +393,13 @@ class PDFT(mcpdft.PDFT):
 
     def load_adm(self, h5file):
         return load_adm(h5file)
+
+    def compute_pdft_new(self, xc, do_split=False):
+        self._init_ot(xc)
+        grids_attr = {}
+        if self.grids_level is not None:
+            grids_attr['level'] = self.grids_level
+        self._init_grids(grids_attr)
+        res, _ = compute_pdft_e(self, do_split=do_split, max_memory=self.max_memory)
+        res_supd = get_supd_func(res, xc.upper())
+        #return res_supd
