@@ -5,6 +5,7 @@ from pyscf.lib import chkfile
 import pyscf.dft.numint as numint
 from automr import mcpdft
 from automr.mcpdft import sum_adm2
+from automr.numint import nr_rks_abs, nr_uks_abs
 import numpy as np
 from functools import partial
 #import time
@@ -21,11 +22,31 @@ if pdft_backend == 'mrh':
 elif pdft_backend == 'pyscf':
     try:
         #from pyscf.mcpdft.mcpdft import _PDFT
+        #from pyscf.mcpdft import otfnal
         from pyscf.mcpdft.otfnal import energy_ot as get_E_ot
     except:
         print('Warning: pyscf.mcpdft not found')
 print = partial(print, flush=True)
 einsum = partial(np.einsum, optimize=True)
+
+# otfnal.OT_PRESET |={
+#     # Reparametrized-M06L: rep-M06L
+#     # MC23 = { '0.2952*HF + (1-0.2952)*rep-M06L, 0.2952*HF + (1-0.2952)*rep-M06L'}}
+#     # XC_ID_MGGA_C_M06_L = 233
+#     # XC_ID_MGGA_X_M06_L = 203
+#     'MC23pure':{
+#         'xc_base':'M06L',
+#         'ext_params':{203: np.array([3.352197, 6.332929e-01, -9.469553e-01, 2.030835e-01,
+#                                      2.503819, 8.085354e-01, -3.619144, -5.572321e-01,
+#                                      -4.506606, 9.614774e-01, 6.977048, -1.309337, -2.426371,
+#                                      -7.896540e-03, 1.364510e-02, -1.714252e-06, -4.698672e-05, 0.0]),
+#                         233: np.array([0.06, 0.0031, 0.00515088, 0.00304966, 2.427648, 3.707473,
+#                                        -7.943377, -2.521466, 2.658691, 2.932276, -8.832841e-01,
+#                                        -1.895247, -2.899644, -5.068570e-01, -2.712838, 9.416102e-02,
+#                                        -3.485860e-03, -5.811240e-04, 6.668814e-04, 0.0, 2.669169e-01,
+#                                        -7.563289e-02, 7.036292e-02, 3.493904e-04, 6.360837e-04, 0.0, 1e-10])}
+#         }
+# }
 
 
 @timing
@@ -52,6 +73,11 @@ def kernel(pdft, suhf):
         ni = numint.NumInt()
         n, exc, vxc = ni.nr_uks(mol, grids, pdft.xc, dmdefm)
         print('E_xcdft %.6f' % exc)
+        print(f'exc = {exc}')
+        nabs, exc1, vxc1 = nr_uks_abs(ni, mol, grids, pdft.xc, dmdefm)
+        print(f'n = {nabs}, exc = {exc1}')
+        res['xcdft'] = exc
+        pdft.res = res
         if pdft.testd:
             n2, exc2, vxc2 = ni.nr_uks(mol, grids, pdft.xc, dm1)
             print('E_xcrho %.6f' % exc2)
@@ -63,15 +89,16 @@ def kernel(pdft, suhf):
             dm_ub = einsum('ij,j,kj -> ik', natorb, ub, natorb)
             n3, exc3, vxc3 = ni.nr_uks(mol, grids, pdft.xc, (dm_ua, dm_ub))
             print('E_xcu   %.6f' % exc3)
+        res_sudd = get_sudd_func(res, pdft.xc.upper())
+        return res, res_sudd
     elif pdft.dens == 'pd':
         #pdft._init_ot_grids(pdft.xc)
         res, res2 = pdft.get_pd(suhf, pdft.otfnal, pdft.usemo, pdft.do_split, max_memory=pdft.max_memory)
         pdft.res = res
         res_supd = get_supd_func(res, pdft.xc.upper())
-        return res, res2
+        return res, res2 
 
-def check_2pdm(adm2s, dm1s, suhf):
-    na = adm2s[0].shape[0]
+def dump_dm2(adm2s, na):
     for i in range(na):
         for j in range(i,na):
             for k in range(na):
@@ -82,12 +109,36 @@ def check_2pdm(adm2s, dm1s, suhf):
                         print("ab %d %d %d %d %.6f" % (i,j,k,l,adm2s[1][i,l,j,k]))
                     if abs(adm2s[2][i,l,j,k]) > 1e-4:
                         print("bb %d %d %d %d %.6f" % (i,j,k,l,adm2s[2][i,l,j,k]))
+
+def check_2pdm(adm2s, dm1s, suhf):
+    na = adm2s[0].shape[0]
+    dump_dm2(adm2s, na)
     mol = suhf.mol
     h = mol.intor("int1e_kin") + mol.intor("int1e_nuc")
     g = mol.intor("int2e")
     print(dm1s[0])
     e = einsum("pq, qp ->", h, 2*dm1s[0]) + 0.5 * einsum("pqrs, qrps ->", g, 4*(adm2s[0] + adm2s[1] + adm2s[2])) + mol.energy_nuc()
     print('redo e: %.6f' % e)
+
+def check_2pdm_no(adm2s, dm1s, suhf, no):
+    from pyscf import mcscf, ao2mo
+    norb = adm2s[0].shape[0]
+    dump_dm2(adm2s, norb)
+    ne = 3
+    fake_cas = mcscf.CASCI(suhf.guesshf, norb, ne)
+    fake_cas.mo_coeff = no
+    eri_cas = fake_cas.get_h2eff(no)
+    h2e = ao2mo.restore(1, eri_cas, norb)
+    h1eff, energy_core = fake_cas.get_h1eff(no)
+    e0 = energy_core 
+    e1 = einsum("pq, qp ->", h1eff, dm1s[0]+dm1s[1]) 
+    e2 = 0.5 * einsum("pqrs, pqrs ->", h2e, sum_adm2(adm2s)) 
+    e = e0 + e1 + e2
+    print('E0 : %15.8f' % e0)
+    print('E1    : %15.8f' % e1)
+    print('E2    : %15.8f' % e2)
+    print('redo e: %.6f' % e)
+
 
 def dump_adm(h5file, adm1s, adm2, mo, core):
     dic = {
@@ -105,10 +156,12 @@ def load_adm(h5file):
 
 @timing
 def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
+    adm1s, adm2, mo, core = get_adm(pdft, suhf, usemo)
+    return compute_pdft_e(pdft, do_split=do_split, max_memory=max_memory)
+
+@timing
+def get_adm(pdft, suhf, usemo):
     print('pdft backend: %s' % pdft_backend)
-    #ot = _init_ot_grids (ot, suhf.mol)
-    if do_split:
-        xfnal, cfnal = ot.split_x_c()
     dm1s = np.array(suhf.suhf_dm)
     if usemo:
         #_, [core, act, ext] = util2.dump_occ(suhf.natocc[2], 2.0, 0.99999)
@@ -136,6 +189,18 @@ def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
     #dm1s += np.dot (mo_core, moH_core)[None,:,:]
     if pdft.dump_adm:
         dump_adm(pdft.dump_adm, adm1s, adm2, mo, core)
+    pdft.adm_cache = (adm1s, adm2, mo, core)
+    return adm1s, adm2, mo, core
+
+@timing
+def compute_pdft_e(pdft, ot=None, do_split=False, adm1s=None, adm2=None, mo=None, core=None, max_memory=4000):
+    if hasattr(pdft, 'adm_cache') and adm1s is None:
+        adm1s, adm2, mo, core = pdft.adm_cache
+    if pdft.otfnal is not None and ot is None:
+        ot = pdft.otfnal
+    #ot = _init_ot_grids (ot, suhf.mol)
+    if do_split:
+        xfnal, cfnal = ot.split_x_c()
     res = pdft.res
     if do_split:
         E_otx =  get_E_ot(xfnal, adm1s, adm2, mo, core, max_memory=max_memory)
@@ -149,14 +214,22 @@ def get_pd(pdft, suhf, ot, usemo, do_split, max_memory=4000):
         res['otc'] = E_otc
         res['otxc'] = E_ot
     else:
-        E_ot =  get_E_ot(ot, dm1s, adm2, mo, max_memory=max_memory)
+        E_ot =  get_E_ot(ot, adm1s, adm2, mo, core, max_memory=max_memory)
         print('E_ot   : %15.8f' %E_ot)
         #return E_ot
         res['otxc'] = E_ot
+        res.pop('otx', None)
+        res.pop('otc', None)
     return res, (adm1s, adm2, mo, core)
+
+def e_sudd(res):
+    return res['suhf'] + res['xcdft'] - res['k'] - res['c']
 
 def e_supd(res, hyb):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb)
+
+def e_supd_hyb_i(res, hyb):
+    return res['suhf'] + res['otxc'] + (- res['k'] - res['c']) * (1.0 - hyb) 
 
 def e_supd_k(res, hyb, k):
     return res['suhf'] + (res['otx'] - res['k'] - res['c']) * (1.0 - hyb) + (1.0-hyb**k)*res['otc']
@@ -164,18 +237,37 @@ def e_supd_k(res, hyb, k):
 def e_supd_c(res, hyb, c):
     return res['suhf'] + (res['otxc'] - res['k'] - res['c']) * (1.0 - hyb) + c*res['otc']
 
+def get_sudd_func(res, xc):
+    res_sudd = {'e_sudd': e_sudd(res)}
+    print('E(SU-DD-%s) : %15.8f' % (xc, res_sudd['e_sudd']))
+    return res_sudd
+
+intrinsic_hyb = {
+    'MC23': 0.2952,
+    'TMC23': 0.2952,
+    'TM06L29':0.2952,
+}
+
 def get_supd_func(res, xc):
     #hyb = 0.25
     k = 2
     c = 0.4
-    res_supd = {'e_supd': e_supd(res, 0.0),
+    if xc in intrinsic_hyb:
+        hyb = intrinsic_hyb[xc]
+        res_supd = {'e_supd': e_supd_hyb_i(res, hyb)}
+    else:
+        #hyb = 0.0
+        res_supd = {'e_supd': e_supd(res, 0.0)}
+    print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
+    if 'otx' in res:
+        res_supd |= {
                 'e_supd_k': e_supd_k(res, 0.25, k),
                 'e_supd_k1': e_supd_k(res, 0.10, k),
                 'e_supd_c': e_supd_c(res, 0.25, c)}
-    print('E(SU-%s) : %15.8f' % (xc, res_supd['e_supd']))
-    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.25, k, res_supd['e_supd_k']))
-    print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.10, k, res_supd['e_supd_k1']))
-    print('E(SU-%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, 0.25, c, res_supd['e_supd_c']))
+    #if res['otx'] is not None:
+        print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.25, k, res_supd['e_supd_k']))
+        print('E(SU-%s(lambda=%.2f,k=%.2f)) : %15.8f' % (xc, 0.10, k, res_supd['e_supd_k1']))
+        print('E(SU-%s(lambda=%.2f,c=%.2f)) : %15.8f' % (xc, 0.25, c, res_supd['e_supd_c']))
     return res_supd
 
 def new_decomp(suhf, dm1):
@@ -201,7 +293,22 @@ def new_decomp(suhf, dm1):
            'j': Ej,
            'k': Ek,
            'c': Ec}
+    #EJ0, EK0 = suhf.get_EJK()
+    #print('Ej0   : %15.8f' % EJ0)
+    #print('Ek0   : %15.8f' % EK0)
     return res
+
+def uhf_decomp(mf, dm=None):
+    if dm is None:
+        dm = mf.make_rdm1()
+    vj, vk = mf.get_jk(dm=dm)
+    veffj = vj[0] + vj[1]
+    veffk = -vk
+    Ej = np.trace(np.dot(veffj, dm[0] + dm[1])) * 0.5
+    Ek = np.trace(np.dot(veffk[0], dm[0]) + np.dot(veffk[1], dm[1])) * 0.5
+    print('E_j    : %15.8f' % Ej)
+    print('E_k    : %15.8f' % Ek)
+
 
 def old_decomp(suhf, dm1):
     dm1t = dm1[0] + dm1[1]
@@ -286,3 +393,13 @@ class PDFT(mcpdft.PDFT):
 
     def load_adm(self, h5file):
         return load_adm(h5file)
+
+    def compute_pdft_new(self, xc, do_split=False):
+        self._init_ot(xc)
+        grids_attr = {}
+        if self.grids_level is not None:
+            grids_attr['level'] = self.grids_level
+        self._init_grids(grids_attr)
+        res, _ = compute_pdft_e(self, do_split=do_split, max_memory=self.max_memory)
+        res_supd = get_supd_func(res, xc.upper())
+        #return res_supd

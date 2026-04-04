@@ -55,8 +55,8 @@ def find_NO(suhf, dm, mo_occ):
     cut_no = suhf.cut_no
     #dm = dm*(-1)
     #print(dm)
-    occa, occb = mo_occ
-    vira, virb = get_vir(occa, occb)
+    #occa, occb = mo_occ
+    #vira, virb = get_vir(occa, occb)
     na, nb = suhf.nelec
     #print(occa,occb,vira, virb)
     ev_a, v_a = eig(dm[0]*(-1))
@@ -86,8 +86,9 @@ def find_NO(suhf, dm, mo_occ):
         v = np.hstack((v_a1, v_b1, v_a2, v_b2))[:,:pa+pb]
     #v = np.hstack((v, np.zeros((v.shape[0], v.shape[0]-pa-pb))))
     if suhf.debug or suhf.printmo:
-        print('NO vec')
-        print(v)
+        print(f'NO vec {v.shape}')
+        #print(v)
+        #print(v[:43,:43])
     dm_expd = np.hstack(
         (np.vstack((dm[0], np.zeros(dm[0].shape))), 
         np.vstack((np.zeros(dm[1].shape), dm[1])))
@@ -101,6 +102,9 @@ def find_NO(suhf, dm, mo_occ):
     return dm_no, dm_expd, v
 
 def get_Ng(grids, no, dm, occ):
+    '''
+    dm: dm in no basis
+    '''
     Dg = []
     Ng = []
     Pg = []
@@ -133,11 +137,16 @@ def get_Ng(grids, no, dm, occ):
 def expd(mo, mo_occ):
     C_a, C_b = mo
     occa, occb = mo_occ
-    vira, virb = get_vir(occa, occb)
+    #vira, virb = get_vir(occa, occb)
     C_a1 = C_a[:,occa==1]
-    C_a2 = C_a[:,vira==1]
+    C_a2 = C_a[:,occa==0]
     C_b1 = C_b[:,occb==1]
-    C_b2 = C_b[:,virb==1]
+    C_b2 = C_b[:,occb==0]
+    #print('C_a1', C_a1.shape)
+    #print(C_a1[:43,:43])
+    #print(C_a2)
+    #print(C_b1[:39,:39])
+    #print(C_b2)
     C_org = np.hstack((
         np.vstack((C_a1, np.zeros(C_a1.shape))),
         np.vstack((np.zeros(C_b1.shape), C_b1)),
@@ -147,6 +156,9 @@ def expd(mo, mo_occ):
     return C_org
 
 def get_xg(suhf, no, mo_occ, Ng):
+    #print('mo_ortho, mo_occ')
+    #print(suhf.mo_ortho[0][:43,:43])
+    #print(mo_occ[0])
     C_org = expd(suhf.mo_ortho, mo_occ)
     #print(C_org)
     C_no = einsum('ji,jk->ik', no, C_org)
@@ -156,8 +168,10 @@ def get_xg(suhf, no, mo_occ, Ng):
     na,nb = suhf.nelec
     occ = na+nb
     C_oo = C_no[:occ, :occ]
+    #print(C_oo[:43,:43])
+    #print(C_oo[43:43+39,43:43+39])
     detC = np.linalg.det(C_oo)
-    print('detC', detC)
+    print('detC %.8f'%detC)
     detNg = []
     for ng in Ng:
         detng = np.linalg.det(ng)
@@ -218,6 +232,16 @@ def get_H(suhf, hcore_ortho, no, Pg, Gg, xg):
     H = suhf.integr_beta(trHg, fac='xg')
     print('Hsp + Hph = ', H)
     return trHg, ciH, H
+
+def get_E1(suhf, hcore_no, Pg):
+    trHg = np.zeros(len(Pg))
+    for i, pg in enumerate(Pg):
+        H = np.trace(np.dot(hcore_no, pg))
+        trHg[i] = H
+        #print(i, H*xg[i])
+    E1 = suhf.integr_beta(trHg, fac='xg')
+    print('E1 = %.6f'% E1)
+    return E1
 
 def get_EX(suhf, no, Pg, Kg, xg):
     trXg = np.zeros(len(Pg))
@@ -354,15 +378,15 @@ class SUHF():
         max_cycle: 70
         diis_on: 
         level_shift:
-        setmom:
     Output:
         E_suhf:
         mo_reg:
         dm_reg: deformed density matrix
-        suhf_dm:
+        suhf_dm: 1pdm
         natocc: SUHF natural orbital occupation number
         natorb: SUHF natural orbital (regular basis) 
     '''
+    orbsym = None
 
     def __init__(self, guesshf=None):
         self.guesshf = guesshf
@@ -386,8 +410,12 @@ class SUHF():
         self.diis_start_damp = 0
         self.level_shift = None
         self.shift_driver = 'def'
+        self.incfock = False
+        self.ifsel = 2
 
         self.dft = False
+        self.xc = None
+        self.symm = False
         self.makedm = True
         self.do2pdm = False
         self.tofch = False
@@ -459,7 +487,9 @@ class SUHF():
             self.guesshf = hf
             print('****** End of UHF ********')
         elif self.chkfile is not None:
-            self.mol, suinfo = util2.load_chk(self.chkfile)
+            if os.path.isfile(self.chkfile):
+                self.mol, suinfo = util2.load_chk(self.chkfile)
+            #self.dumpchk = True
         else:
             guess = ''' 
             guesshf: a UHF object
@@ -468,7 +498,8 @@ class SUHF():
             '''
             raise AttributeError('You must provide one of below as a guess:' + guess)
         if self.dumpchk:
-            self.chkfile = self.output + '_su.pchk'
+            if self.chkfile is None:
+                self.chkfile = self.output + '_su.pchk'
             print('chkfile:  %s  # the file store suhf info' % self.chkfile)
         #self.chkfile2 = self.output + '_no.pchk'
         #print('chkfile2: %s # the file store suhf NO' % self.chkfile2)
@@ -486,6 +517,9 @@ class SUHF():
                 self.diis = scf.diis.CDIIS()
             elif self.diis_driver == 'rev1':
                 self.diis = util2.CDIISrev1()
+                #self.diis.damp = self.diis_damp
+            elif self.diis_driver == 'rev2' or self.diis_driver == 'plain':
+                self.diis = util2.CDIISrev2()
             self.diis.space = self.diis_space
             #self.diis.damp = self.diis_damp
             print('DIIS: %s' % self.diis.__class__)
@@ -542,12 +576,41 @@ class SUHF():
         self.hcore_ortho = einsum('ji,jk,kl->il', X, hcore, X)
         if self.debug:
             print('hcore (ortho)\n', self.hcore_ortho)
-        self.vhfopt = hf.init_direct_scf()
+        #hf.direct_scf_tol = 1e-13
+        #self.vhfopt = hf.init_direct_scf()
+        self.vhfopt = {None: hf.init_direct_scf(self.mol)}
 
         if self.dft:
-            self.ksgrids = sudft.set_grids(self.mol)
-            self.xc = self.guesshf.xc
-        mo_occ = get_occ(self)
+            if self.xc is None:
+                if getattr(self.guesshf, 'xc', None) is None:
+                    raise AttributeError('self.xc needs to be set')
+                else:
+                    self.xc = self.guesshf.xc
+            #ni = numint.NumInt()
+            #self._numint = ni
+            self._ks, self.ksgrids = sudft.set_grids(self.mol)
+            #self.xc = self.guesshf.xc
+            self._ks.xc = self.xc
+            self._numint = self._ks._numint
+            ni = self._numint
+            omega, alpha, hyb = ni.rsh_and_hybrid_coeff(self.xc, spin=self.mol.spin)
+            self.hyb = hyb
+            print('dft on')
+            print(f'xc: {self.xc}, hyb: {hyb}')
+            if omega > 1e-10:
+                #raise NotImplementedError('Range Separation not Implemented')
+                self.omega = omega
+                self.alpha = alpha
+                print(f'omega: {omega}, alpha: {alpha}')
+                mol = self.mol
+                with mol.with_range_coulomb(omega):
+                    self.vhfopt[omega] = hf.init_direct_scf(mol)
+            else:
+                self.omega = None
+        else:
+            self.hyb = None
+            self.omega = None
+        mo_occ = self.get_occ()
         self.mo_occ = mo_occ
         self.mom = False
         if self.setmom is not None:
@@ -598,6 +661,8 @@ class SUHF():
         self.conv = conv
         
         Pgao = None
+        #old_Pgao = None
+        #old_Ggao = None
         F_mod_ortho = None
         #print(vhfopt)
         t_pre = time.time() 
@@ -606,17 +671,19 @@ class SUHF():
             print('**** Start Cycle %d ****' % cyc)
             old_suhf = self.E_suhf
             old_dm = self.dm_ortho
-            #if Pgao is not None:
-            #    old_Pgao = Pgao
-            #    old_Ggao = Ggao
-            #else:
-            old_Pgao = old_Ggao = None
+            if Pgao is not None and self.incfock:
+                old_Pgao = Pgao
+                old_Ggao = Ggao
+            else:
+                old_Pgao = None
+                old_Ggao = None
             #if cyc==0:
             #    veff = mf.get_veff(dm = dm)
             #else:
             t01 = time.time()
             dm_reg = einsum('ij,tjk,lk->til', X, self.dm_ortho, X)
-            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            #veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            veff = self.get_uhf_veff(dm_reg)
             veff_ortho = einsum('ji,tjk,kl->til', X, veff, X)
             if self.debug:
                 print('dm (ortho)')
@@ -642,7 +709,8 @@ class SUHF():
                 print('P(g) (NO)\n', Pg[0])
             t05 = time.time()
             print('time for NO, Ng: %.3f' % (t05-t01))
-            Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = jk.get_Gg(self.mol, Pg, self.no, X, dm_last=old_Pgao, Ggao_last=old_Ggao, opt=self.vhfopt)
+            #Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = jk.get_Gg(self.mol, Pg, self.no, X, dm_last=old_Pgao, Ggao_last=old_Ggao, opt=self.vhfopt)
+            Gg, Gg_ortho, Pg_ortho, Pgao, Ggao = self.get_Gg(dm_last=old_Pgao, Ggao_last=old_Ggao)
             self.Gg = Gg
             self.Gg_ortho = Gg_ortho
             if self.debug:
@@ -658,27 +726,36 @@ class SUHF():
             S2 = get_S2(self, Pg_ortho)
             Xg, Xg_int, Yg = get_Yg(self, Dg, Ng, self.dm_no, na+nb)
             F_last = F_mod_ortho
-            Feff_ortho,  F_mod_ortho = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
+            Feff_ortho,  F_mod_ortho0 = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
             E_suhf = self.energy_nuc + H_suhf
             #print('E(SUHF) = %15.8f' % E_suhf)
-            Faa = F_mod_ortho[:norb, :norb]
-            Fbb = F_mod_ortho[norb:, norb:]
-            F_mod_ortho = np.array([Faa,Fbb])
+            if self.ifsel == 1:
+                F_mod_ortho = Feff_ortho
+            elif self.ifsel == 2:
+                Faa = F_mod_ortho0[:norb, :norb]
+                Fbb = F_mod_ortho0[norb:, norb:]
+                F_mod_ortho = np.array([Faa,Fbb])
             if self.dft:
                 exc, vxc = self.ddft()
                 E_suhf += exc
                 # dft for noiter only, Fock is not well defined
-                F_mod_ortho = F_mod_ortho + vxc
+                vxc_ortho = einsum('ji,tjk,kl->til', X, vxc, X)
+                F_mod_ortho = F_mod_ortho + vxc_ortho
 
             self.E_suhf = E_suhf
+            if old_suhf is not None:
+                dE = E_suhf - old_suhf
+                energy_rise = dE > 1e-7
+            else:
+                energy_rise = False
             if self.diis_on and cyc >= self.diis_start_cyc:
                 s1e = np.eye(norb)
                 errvec = scf.diis.get_err_vec(s1e, self.dm_ortho, F_mod_ortho, None)
                 print('diis-norm(errvec)=%.6g'% np.linalg.norm(errvec))
-                if cyc < self.diis_start_damp:
-                    self.diis.damp = 0.0
-                else:
+                if cyc >= self.diis_start_damp and energy_rise:
                     self.diis.damp = self.diis_damp
+                else:
+                    self.diis.damp = 0.0
                 print('diis_damp = %g' % self.diis.damp)
                 F_mod_ortho = self.diis.update(s1e, self.dm_ortho, F_mod_ortho, f_prev=F_last)
                 print('F(mod,ortho) updated with CDIIS')
@@ -695,23 +772,24 @@ class SUHF():
                 self.regular()
                 print(' E = %15.8f' % E_suhf)
                 break  
-            mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
+            mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
+            #print(mo_ortho)
+            self.mo_ortho = mo_ortho
             self.mo_e = mo_e
-            util2.dump_moe(mo_e, na, nb)
+            if self.mom and cyc >= self.mom_start_cyc:
+                mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
+            else:
+                mo_occ = self.get_occ(mo_e, mo_ortho)
+            self.mo_occ = mo_occ
+            self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
             dm_ortho = make_dm(mo_ortho, mo_occ)
             if self.debug or self.printmo:
                 #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
                 print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
                 print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
             self.dm_ortho = dm_ortho
-            self.mo_ortho = mo_ortho
             self.regular()
-            if self.mom and cyc >= self.mom_start_cyc:
-                mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
-            else:
-                mo_occ = get_occ(self, mo_e)
-            self.mo_occ = mo_occ
             t10 = time.time()
             print('time for xg, H, S2, Yg, Feff: %.3f' % (t10-t06))
         
@@ -730,11 +808,13 @@ class SUHF():
         # extra cycle to remove level shift
         old_suhf = self.E_suhf
         old_dm = self.dm_ortho
-        #old_Pgao = Pgao
-        #old_Ggao = Ggao
-        if self.level_shift is not None:
+        old_Pgao = None
+        old_Ggao = None
+        if self.level_shift is not None and not noiter:
             print('**** Extra Cycle %d ****' % cyc)
-            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            #veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt)
+            dm_reg = self.dm_reg
+            veff = self.get_uhf_veff(dm_reg)
             veff_ortho = einsum('ji,tjk,kl->til', X, veff, X)
             if self.debug:
                 print('dm (ortho)')
@@ -754,7 +834,8 @@ class SUHF():
                 print('D(g) (NO)\n', Dg[0])
                 print('N(g) (NO)\n', Ng[0])
                 print('P(g) (NO)\n', Pg[0])
-            Gg, Gg_ortho, Pg_ortho, _, _ = jk.get_Gg(self.mol, Pg, self.no, X, opt=self.vhfopt)
+            #Gg, Gg_ortho, Pg_ortho, _, _ = jk.get_Gg(self.mol, Pg, self.no, X, opt=self.vhfopt)
+            Gg, Gg_ortho, Pg_ortho, _, _ = self.get_Gg()
             self.Gg = Gg
             self.Gg_ortho = Gg_ortho
             if self.debug:
@@ -769,27 +850,38 @@ class SUHF():
             Xg, Xg_int, Yg = get_Yg(self, Dg, Ng, self.dm_no, na+nb)
             Feff_ortho, F_mod_ortho = get_Feff(self, trHg, Gg, Ng, Pg, Dg, na+nb, Yg, Xg, F_ortho)
             E_suhf = self.energy_nuc + H_suhf
+            if self.ifsel == 1:
+                F_mod_ortho = Feff_ortho
+            elif self.ifsel == 2:
+                Faa = F_mod_ortho0[:norb, :norb]
+                Fbb = F_mod_ortho0[norb:, norb:]
+                F_mod_ortho = np.array([Faa,Fbb])
+            if self.dft:
+                exc, vxc = self.ddft()
+                E_suhf += exc
+                # dft for noiter only, Fock is not well defined
+                vxc_ortho = einsum('ji,tjk,kl->til', X, vxc, X)
+                F_mod_ortho = F_mod_ortho + vxc_ortho
+            
             self.E_suhf = E_suhf
-            Faa = F_mod_ortho[:norb, :norb]
-            Fbb = F_mod_ortho[norb:, norb:]
-            F_mod_ortho = np.array([Faa,Fbb])
-            mo_e, mo_ortho = Diag_Feff(F_mod_ortho)
+            mo_e, mo_ortho = self.Diag_Feff(F_mod_ortho)
             mo_ortho = np.array(mo_ortho)
-            dm_ortho = make_dm(mo_ortho, mo_occ)
+            self.mo_ortho = mo_ortho
+            self.mo_e = mo_e
             if self.mom and cyc >= self.mom_start_cyc:
                 mo_occ = deltascf.mom_occ(self, self.mom_reforb, self.setocc)
             else:
-                mo_occ = get_occ(self, mo_e)
+                mo_occ = self.get_occ(mo_e, mo_ortho)
             self.mo_occ = mo_occ
-            util2.dump_moe(mo_e, na, nb)
-            if self.debug:
+            self.dump_moe(mo_e, na, nb, mo_occ=mo_occ, orbsym=self.orbsym)
+            dm_ortho = make_dm(mo_ortho, mo_occ)
+            if self.debug or self.printmo:
                 #print('e_a, e_b\n', mo_e[0], '\n', mo_e[1])
                 print('v_a, v_b\n', mo_ortho[0], '\n', mo_ortho[1])
                 print('P_a, P_b\n', dm_ortho[0],'\n', dm_ortho[1])
             self.dm_ortho = dm_ortho
-            self.mo_ortho = mo_ortho
-            self.mo_e = mo_e
             self.regular()
+
             #if old_suhf is not None:
             dE = E_suhf - old_suhf
             ddm = dm_ortho - old_dm
@@ -823,13 +915,69 @@ class SUHF():
         print('time tot: %.3f' % (t_end-t_start))
         print('Date: %s' % time.ctime())
         return E_suhf, self.conv
+    
+    get_occ = get_occ
 
-    def get_JKg(self):
-        return jk.get_JKg(self.mol, self.Pg, self.no, self.X)[:2]
+    dump_moe = util2.dump_moe
 
-    def get_EX(self):
+    def Diag_Feff(self, F):
+        return Diag_Feff(F)
+
+    def density_fit(self, auxbasis=None):
+        #with_df = jk.DF(self.mol)
+        with_df = self.guesshf.with_df
+        #with_df.max_memory = self.max_memory
+        #with_df.verbose = self.verbose
+        #with_df.auxbasis = auxbasis
+        dfmf = DFSUHF(self)
+        dfmf.with_df = with_df
+        return lib.set_class(dfmf, (DFSUHF, self.__class__))
+
+    def get_uhf_veff(self, dm_reg):
+        if self.dft:
+            hyb = self.hyb
+            #veff = self._ks.get_veff(dm=dm_reg)
+            vj, vk = scf.hf.get_jk(self.mol, dm_reg, vhfopt=self.vhfopt[None])
+            vk = vk * hyb
+            if self.omega is not None:
+                omega=self.omega
+                alpha=self.alpha
+                vklr = scf.hf.get_jk(self.mol, dm_reg, with_j=False, vhfopt=self.vhfopt[omega])[1]
+                vk = vk + vklr * (alpha-hyb) 
+            veff = vj[0] + vj[1] - vk
+        else:
+            veff = scf.uhf.get_veff(self.mol, dm_reg, vhfopt=self.vhfopt[None])
+        return veff
+
+    def get_Gg(self, dm_last=None, Ggao_last=None):
+        if self.omega is not None:
+            rsh = self.omega, self.alpha, self.hyb
+        else:
+            rsh = None
+        return jk.get_Gg(self.mol, self.Pg, self.no, self.X, dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt, 
+                         hyb=self.hyb, rsh=rsh)
+
+    def get_JKg(self, hyb=None):
+        if self.omega is not None:
+            raise NotImplementedError()
+        return jk.get_JKg(self.mol, self.Pg, self.no, self.X, hyb=hyb)[:2]
+
+    def get_EJK(self):
         Jg, Kg = self.get_JKg()
-        return get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        EJ = get_EX(self, self.no, self.Pg, Jg, self.xg)[1]
+        EK = get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        Jg, Kg = self.get_JKg(hyb=self.hyb)
+        EK1 = get_EX(self, self.no, self.Pg, Kg, self.xg)[1]
+        print('EJ = %.8f, EK = %.8f, EK1 = %.8f' % (EJ, EK, EK1))
+        return EJ, EK
+    
+    def get_E1(self):
+        E1 = get_E1(self, self.hcore_no, self.Pg)
+        return E1
+
+    def decomp(self):
+        self.get_EJK()
+        self.get_E1()
     
     fchk = util2.fchk
     
@@ -837,19 +985,47 @@ class SUHF():
         if self.dm_reg is None:
             X = self.X
             self.dm_reg = einsum('ij,tjk,lk->til', X, self.dm_ortho, X) # regular ao
-        ni = numint.NumInt()
-        if xc is not None:
-            self.ksgrids = sudft.set_grids(self.mol)
-        else:
+        if xc is None:
             xc = self.xc
+        #ni = numint.NumInt()
+        ni = self._numint
+        if self.ksgrids is None:
+            _, self.ksgrids = sudft.set_grids(self.mol)
         n, exc, vxc = ni.nr_uks(self.mol, self.ksgrids, xc, self.dm_reg)
-        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=self.mol.spin)
-        if omega > 1e-10: raise NotImplementedError('Range Separation not Implemented')
-        if hyb > 1e-10:
-            ex_hf = self.get_EX()
-            exc -= (1-hyb)*ex_hf
-        print('e_dft-e_hf(%s): %.6f ' % (xc,exc))
+        #omega, alpha, hyb = ni.rsh_and_hybrid_coeff(xc, spin=self.mol.spin)
+        #if omega > 1e-10: raise NotImplementedError('Range Separation not Implemented')
+        #if hyb > 1e-10:
+        #    ex_hf = self.get_EX()
+        #    exc -= (1-hyb)*ex_hf
+        #print('e_dft-e_hf(%s): %.6f ' % (xc,exc))
         return exc, vxc
+
+    def to_hf(self):
+        self.dft = False
+        self.hyb = None
+        self.omega = None
+        return self
+    
+    def mo_reg2ortho(self, mo):
+        if mo.ndim == 3:
+            mo_ortho = einsum('ij,tjk->tik', self.XS, mo)
+        elif mo.ndim == 2:
+            mo_ortho = einsum('ij,jk->ik', self.XS, mo)
+        else:
+            raise ValueError('mo should be 2D or 3D array')
+        return mo_ortho
+    
+    def mo_ortho2reg(self, mo):
+        if mo.ndim == 3:
+            mo_reg = einsum('ij,tjk->tik', self.X, mo)
+        elif mo.ndim == 2:
+            mo_reg = einsum('ij,jk->ik', self.X, mo)
+        else:
+            raise ValueError('mo should be 2D or 3D array')
+        return mo_reg
+    
+    def f_ortho2reg(self, f):
+        return einsum('ji,tjk,kl->til', self.XS, f, self.XS)
 
     def regular(self):
         X = self.X
@@ -903,4 +1079,35 @@ def shift_down_occ(s, dm, f, shift):
     f = f - shift * dm
     return f
 
+class DFSUHF(SUHF):
 
+    __name_mixin__ = 'DF'
+
+    def __init__(self, smf):
+        self.__dict__.update(smf.__dict__)
+
+    def get_Gg(self, dm_last=None, Ggao_last=None):
+        if self.omega is not None:
+            rsh = self.omega, self.alpha, self.hyb
+        else:
+            rsh = None
+        return jk.get_Gg_df(self.mol, self.Pg, self.no, self.X, #dm_last=dm_last, Ggao_last=Ggao_last, opt=self.vhfopt
+                            with_df=self.with_df, rsh=rsh)
+
+    def get_uhf_veff(self, dm_reg):
+        if self.dft:
+            hyb = self.hyb
+            dfobj = self.with_df
+            #veff = self._ks.get_veff(dm=dm_reg)
+            vj, vk = jk.get_jk_df(dfobj, dm_reg, hermi=0)
+            vk = vk * hyb
+            if self.omega is not None:
+                omega=self.omega
+                alpha=self.alpha
+                with dfobj.range_coulomb(omega) as rsh_df:
+                    vklr = jk.get_jk_df(rsh_df, dm_reg, with_j=False, hermi=0)[1]
+                vk = vk + vklr * (alpha-hyb) 
+        else:
+            vj, vk = jk.get_jk_df(self.with_df, dm_reg, hermi=0)
+        veff = vj[0] + vj[1] - vk
+        return veff

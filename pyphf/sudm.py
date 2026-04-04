@@ -23,7 +23,7 @@ def make_1pdm(suhf, Dg, dm_no, C_no):
     Ngg = get_Ngg(Dg, dm_no, occ)
     t1 = time.time()
     Pgg, Pgg_ortho = get_Pgg(Dg, dm_no, Ngg, occ, no)
-    print(Pgg[0])
+    #print(Pgg[0])
     suhf.Pgg_ortho = Pgg_ortho
     t2 = time.time()
     xgg = get_xgg(Ngg, C_oo)
