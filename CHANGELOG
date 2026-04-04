@@ -1,4 +1,4 @@
-version dev
+version 0.6 (Apr 4, 2026)
 --------------------------
 * inc-fock for direct SCF
 * add DF SCF

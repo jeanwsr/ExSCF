@@ -1,6 +1,6 @@
 from pyphf import suscf, supdft, sudft, symm
 
-__version__ = '0.5.0'
+__version__ = '0.6.0'
 
 def SUHF(mf):
     if not mf.mol.symmetry or mf.mol.groupname=='C1':
