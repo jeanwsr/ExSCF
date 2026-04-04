@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ExSCF"
+version = "0.6.0"
+description = "Program for methods based on Projected Hartree-Fock"
+readme = "README.md"
+license = "LGPL-2.1-or-later"
+authors = [
+    {name = "Shirong Wang", email = "srwang20@fudan.edu.cn"},
+]
+requires-python = ">=3.7"
+dependencies = [
+    "numpy",
+    "scipy",
+    "sympy",
+    "pyscf",
+    "pyAutoMR"
+]
+
+#[project.optional-dependencies]
+#pdft = ["pyscf-forge"]
+#mokit = ["mokit"]
+
+[project.urls]
+Homepage = "https://github.com/jeanwsr/ExSCF"
+Repository = "https://github.com/jeanwsr/ExSCF"
+
+[tool.setuptools.packages.find]
+include = ["pyphf*"]
