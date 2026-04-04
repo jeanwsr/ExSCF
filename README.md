@@ -1,16 +1,20 @@
 # ExSCF
-ExSCF is a program for methods based on Projected Hartree-Fock, which aims to achieve multireference accuracy with SCF cost.
+ExSCF is a program for methods based on Projected Hartree-Fock.
 
 ## Pre-requisites
 * sympy
 * [PySCF](https://github.com/pyscf/pyscf)
-* [pyscf-forge](https://github.com/pyscf/pyscf-forge) (optional, for SU-PDFT)
-* [MOKIT](https://gitlab.com/jxzou/mokit) (optional, for read/write fch and CASDFT)
-* [pyAutoMR](https://github.com/hebrewsnabla/pyAutoMR) (optional)
+* [pyAutoMR](https://github.com/hebrewsnabla/pyAutoMR)
+* [MOKIT](https://gitlab.com/jxzou/mokit) (optional, for read/write fch)
 
 Of course we need numpy, scipy, etc., but these are also required by PySCF, so they are not listed here.
 
 ## Installation
+(1) From pypi
+```
+pip install exscf
+```
+(2) From source
 * git clone
 * add `/path/to/ExSCF` to your `PYTHONPATH`
 
